@@ -1,2 +1,4 @@
 alembic
 asyncpg
+bcrypt
+PyJWT
