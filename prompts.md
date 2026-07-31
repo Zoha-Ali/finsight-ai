@@ -31,3 +31,8 @@ Files affected: backend/app/schemas.py, backend/app/routes/transactions.py, back
 Prompt used: Create a README.md at the project root for FinSight AI, including project overview, a mermaid architecture flowchart (Frontend -> Backend API -> Supervisor -> 5 worker agents -> MCP server -> PostgreSQL), a tech stack table, model selection rationale (claude-haiku-4-5 for routine agent tasks, vision API for receipt parsing), setup instructions, and current status (built vs next).
 Result: Added README.md with all 6 requested sections, kept scannable/concise.
 Files affected: README.md, prompts.md
+
+[2026-07-31] — Add roadmap checklist
+Prompt used: Create CHECKLIST.md at the project root, structured as a markdown checklist by Week 5-8 roadmap phases plus an empty Daily Log table. Mark Week 5 items already completed based on the current codebase.
+Result: Added CHECKLIST.md with all 4 weekly phases and a Daily Log table. Verified Week 5 checkmarks against the codebase before writing them, including confirming via a live DB query that Alembic migrations have actually been applied (alembic_version + all 5 model tables present in Neon), not just configured.
+Files affected: CHECKLIST.md, prompts.md
