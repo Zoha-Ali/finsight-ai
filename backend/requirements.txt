@@ -2,3 +2,4 @@ alembic
 asyncpg
 bcrypt
 PyJWT
+mcp

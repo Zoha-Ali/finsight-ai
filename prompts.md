@@ -36,3 +36,8 @@ Files affected: README.md, prompts.md
 Prompt used: Create CHECKLIST.md at the project root, structured as a markdown checklist by Week 5-8 roadmap phases plus an empty Daily Log table. Mark Week 5 items already completed based on the current codebase.
 Result: Added CHECKLIST.md with all 4 weekly phases and a Daily Log table. Verified Week 5 checkmarks against the codebase before writing them, including confirming via a live DB query that Alembic migrations have actually been applied (alembic_version + all 5 model tables present in Neon), not just configured.
 Files affected: CHECKLIST.md, prompts.md
+
+[2026-07-31] — Add MCP server with 5 owner-scoped tools
+Prompt used: Create backend/app/mcp_server.py, a FastMCP server exposing get_transactions, record_transaction, get_budget, get_monthly_summary, and get_anomalies as @mcp.tool()-decorated functions, each taking owner_id and using AsyncSessionLocal for the DB session, with docstrings agents will read to decide when to call each tool.
+Result: Built mcp_server.py using mcp.server.fastmcp.FastMCP with all 5 tools, each opening/closing its own AsyncSessionLocal session and returning plain JSON-serializable dicts (not ORM objects). get_monthly_summary groups spend by category via EXTRACT(month/year); get_anomalies joins Anomaly to Transaction for merchant/amount/date. Added mcp to requirements.txt. Verified end-to-end against the real Neon DB with a temporary test user/category/budget: all 5 tools returned correct data (including budget=None for a nonexistent category and the owner_id FK constraint correctly rejecting a fake owner_id), then cleaned up the test rows.
+Files affected: backend/app/mcp_server.py, backend/requirements.txt, prompts.md
