@@ -3,3 +3,4 @@ asyncpg
 bcrypt
 PyJWT
 mcp
+httpx
