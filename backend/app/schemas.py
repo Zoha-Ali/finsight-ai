@@ -28,30 +28,35 @@ class TransactionOut(BaseModel):
     category_id: Optional[int] = None
 
 
-class ReceiptUploadResponse(BaseModel):
-    filename: str
-    status: str
-    transaction: Optional[TransactionOut] = None
-
-
 class CategorizeRequest(BaseModel):
     transaction_id: int
 
 
 class CategorizeResponse(BaseModel):
     transaction_id: int
-    predicted_category: str
-    confidence: float
+    category: str
+    category_id: int
+    is_anomaly: bool
+    reason: Optional[str] = None
 
 
-class ForecastPoint(BaseModel):
-    month: str
-    predicted_spend: float
+class ReceiptUploadResponse(BaseModel):
+    filename: Optional[str] = None
+    type: str
+    transactions_created: list[CategorizeResponse]
+
+
+class ForecastEntry(BaseModel):
+    category: str
+    spent_so_far: float
+    projected_total: float
+    budget_limit: Optional[float] = None
+    on_track_to_overspend: bool
 
 
 class ForecastResponse(BaseModel):
-    owner_id: int
-    forecast: list[ForecastPoint]
+    forecasts: list[ForecastEntry]
+    summary: str
 
 
 class QARequest(BaseModel):
@@ -60,4 +65,6 @@ class QARequest(BaseModel):
 
 class QAResponse(BaseModel):
     question: str
-    answer: str
+    agent_used: str
+    result: dict
+    trace: list[dict]

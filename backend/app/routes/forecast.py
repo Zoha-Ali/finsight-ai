@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends
 
+from ..agents.forecasting_agent import generate_forecast
 from ..auth import get_current_user
 from ..models import User
-from ..schemas import ForecastPoint, ForecastResponse
+from ..schemas import ForecastResponse
 
 router = APIRouter(prefix="/forecast", tags=["forecast"])
 
@@ -11,9 +12,5 @@ router = APIRouter(prefix="/forecast", tags=["forecast"])
 async def get_forecast(
     current_user: User = Depends(get_current_user),
 ) -> ForecastResponse:
-    return ForecastResponse(
-        owner_id=current_user.id,
-        forecast=[
-            ForecastPoint(month="2026-08", predicted_spend=0.0),
-        ],
-    )
+    result = await generate_forecast(current_user.id)
+    return ForecastResponse(**result)
