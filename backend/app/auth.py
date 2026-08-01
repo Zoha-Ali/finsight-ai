@@ -36,18 +36,18 @@ def verify_password(password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(digest, hashed_password.encode("utf-8"))
 
 
-def _create_token(user_id: int, expires_delta: timedelta) -> str:
+def _create_token(user_id: int, token_type: str, expires_delta: timedelta) -> str:
     now = datetime.now(timezone.utc)
-    payload = {"sub": str(user_id), "iat": now, "exp": now + expires_delta}
+    payload = {"sub": str(user_id), "type": token_type, "iat": now, "exp": now + expires_delta}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def create_access_token(user_id: int) -> str:
-    return _create_token(user_id, ACCESS_TOKEN_EXPIRE)
+    return _create_token(user_id, "access", ACCESS_TOKEN_EXPIRE)
 
 
 def create_refresh_token(user_id: int) -> str:
-    return _create_token(user_id, REFRESH_TOKEN_EXPIRE)
+    return _create_token(user_id, "refresh", REFRESH_TOKEN_EXPIRE)
 
 
 def decode_token(token: str) -> dict:
@@ -67,7 +67,7 @@ async def get_current_user(
 ) -> User:
     payload = decode_token(token)
     user_id = payload.get("sub")
-    if user_id is None:
+    if user_id is None or payload.get("type") != "access":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
