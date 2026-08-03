@@ -104,6 +104,11 @@ class CategoryOut(BaseModel):
     name: str
 
 
+class BudgetCreate(BaseModel):
+    category_id: int
+    monthly_limit: float
+
+
 class BudgetOut(BaseModel):
     id: int
     category_id: int

@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import get_current_user
 from ..database import get_db
 from ..models import Anomaly, Budget, Category, Trace, Transaction, User
-from ..schemas import AnomalyOut, BudgetOut, CategoryOut, TraceOut
+from ..schemas import AnomalyOut, BudgetCreate, BudgetOut, CategoryOut, TraceOut
 
 router = APIRouter(tags=["data"])
 
@@ -39,6 +39,47 @@ async def list_budgets(
         )
         for budget, category_name in result.all()
     ]
+
+
+@router.post("/budgets", response_model=BudgetOut)
+async def create_or_update_budget(
+    payload: BudgetCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BudgetOut:
+    category = (
+        await db.execute(select(Category).where(Category.id == payload.category_id))
+    ).scalar_one_or_none()
+    if category is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+
+    existing = await db.execute(
+        select(Budget).where(
+            Budget.owner_id == current_user.id,
+            Budget.category_id == payload.category_id,
+        )
+    )
+    budget = existing.scalar_one_or_none()
+
+    if budget is None:
+        budget = Budget(
+            owner_id=current_user.id,
+            category_id=payload.category_id,
+            monthly_limit=payload.monthly_limit,
+        )
+        db.add(budget)
+    else:
+        budget.monthly_limit = payload.monthly_limit
+
+    await db.commit()
+    await db.refresh(budget)
+
+    return BudgetOut(
+        id=budget.id,
+        category_id=budget.category_id,
+        category_name=category.name,
+        monthly_limit=budget.monthly_limit,
+    )
 
 
 @router.get("/anomalies", response_model=list[AnomalyOut])
