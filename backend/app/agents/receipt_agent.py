@@ -27,11 +27,16 @@ EXTRACTION_SYSTEM_PROMPT = (
     "Respond with ONLY a single raw JSON object - no markdown code fences, "
     "no commentary - matching exactly this schema:\n"
     '{"type": "receipt" | "statement", "transactions": '
-    '[{"merchant": string, "amount": number, "date": "YYYY-MM-DD"}]}\n\n'
+    '[{"merchant": string, "amount": number, "date": "YYYY-MM-DD" | null}]}\n\n'
     'For a single receipt, "transactions" has exactly one item. For a '
-    "statement, include one item per line-item transaction. If a date "
-    "isn't fully legible, make your best guess from context rather than "
-    "omitting the transaction."
+    "statement, include one item per line-item transaction - don't omit a "
+    "transaction just because one field is hard to read.\n\n"
+    'For the "date" field specifically: only return a date you can '
+    "actually read on the image. If no date is visible, or it's too "
+    "blurry, cut off, or ambiguous to read with confidence, return null. "
+    "Do NOT infer, estimate, or guess a plausible-sounding date from "
+    "context - never assume it's today's date, and never guess a year. "
+    "A null date is far better than a fabricated one."
 )
 
 
@@ -84,11 +89,21 @@ def _strip_code_fence(text: str) -> str:
     return text.strip()
 
 
-def _parse_date(value) -> date:
+def _parse_date(value) -> tuple[date, bool]:
+    """Parse a receipt-extracted date, falling back to today if it's
+    missing or unparseable.
+
+    Returns (date, date_estimated). The model is instructed to return
+    null rather than guess a date it can't actually read, but Transaction
+    still needs a concrete date - date_estimated flags when today's date
+    was substituted rather than actually read off the receipt.
+    """
+    if value is None:
+        return date.today(), True
     try:
-        return date.fromisoformat(str(value))
+        return date.fromisoformat(str(value)), False
     except (TypeError, ValueError):
-        return date.today()
+        return date.today(), True
 
 
 async def _call_model(messages: list[dict]) -> str:
@@ -175,6 +190,7 @@ async def process_receipt(image_base64: str, owner_id: int) -> dict:
         doc_type = "statement" if len(raw_transactions) > 1 else "receipt"
 
     created_ids = []
+    date_estimated_by_id: dict[int, bool] = {}
     async with AsyncSessionLocal() as session:
         for item in raw_transactions:
             try:
@@ -183,16 +199,19 @@ async def process_receipt(image_base64: str, owner_id: int) -> dict:
             except (KeyError, TypeError, ValueError):
                 continue
 
+            tx_date, date_estimated = _parse_date(item.get("date"))
+
             transaction = Transaction(
                 owner_id=owner_id,
                 merchant=merchant,
                 amount=amount,
-                date=_parse_date(item.get("date")),
+                date=tx_date,
                 source=TransactionSource.receipt,
             )
             session.add(transaction)
             await session.flush()
             created_ids.append(transaction.id)
+            date_estimated_by_id[transaction.id] = date_estimated
 
         await session.commit()
 
@@ -200,6 +219,8 @@ async def process_receipt(image_base64: str, owner_id: int) -> dict:
         raise ValueError("Extracted transactions were all missing a merchant or amount")
 
     transactions_created = [await categorize_transaction(tx_id, owner_id) for tx_id in created_ids]
+    for entry in transactions_created:
+        entry["date_estimated"] = date_estimated_by_id.get(entry["transaction_id"], False)
 
     result = {"type": doc_type, "transactions_created": transactions_created}
 

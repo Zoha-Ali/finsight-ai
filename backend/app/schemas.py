@@ -64,6 +64,7 @@ class CategorizeResponse(BaseModel):
     category_id: int
     is_anomaly: bool
     reason: Optional[str] = None
+    date_estimated: Optional[bool] = None
 
 
 class ReceiptUploadResponse(BaseModel):
