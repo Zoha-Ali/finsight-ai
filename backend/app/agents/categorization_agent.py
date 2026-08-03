@@ -7,6 +7,7 @@ from sqlalchemy import select
 from ..database import AsyncSessionLocal
 from ..mcp_server import get_transactions
 from ..models import Anomaly, Category, Transaction
+from .tracing import save_trace
 
 load_dotenv()
 
@@ -133,10 +134,19 @@ async def categorize_transaction(transaction_id: int, owner_id: int) -> dict:
 
         await session.commit()
 
-        return {
+        result = {
             "transaction_id": transaction.id,
             "category": predicted_category,
             "category_id": category.id,
             "is_anomaly": is_anomaly,
             "reason": reason,
         }
+
+    await save_trace(
+        owner_id,
+        f"Categorize transaction {transaction_id}",
+        "categorization",
+        [{"agent": "categorization_agent", "action": "categorize_transaction", "result": result}],
+    )
+
+    return result

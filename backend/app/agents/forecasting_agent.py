@@ -6,6 +6,7 @@ import httpx
 from dotenv import load_dotenv
 
 from ..mcp_server import get_budget, get_monthly_summary
+from .tracing import save_trace
 
 load_dotenv()
 
@@ -106,4 +107,13 @@ async def generate_forecast(owner_id: int) -> dict:
 
     summary = await _summarize(forecasts) if forecasts else "No spending recorded yet this month."
 
-    return {"forecasts": forecasts, "summary": summary}
+    result = {"forecasts": forecasts, "summary": summary}
+
+    await save_trace(
+        owner_id,
+        "Generate forecast",
+        "forecasting",
+        [{"agent": "forecasting_agent", "action": "generate_forecast", "result": result}],
+    )
+
+    return result

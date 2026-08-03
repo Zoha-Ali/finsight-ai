@@ -4,11 +4,10 @@ import os
 import httpx
 from dotenv import load_dotenv
 
-from ..database import AsyncSessionLocal
-from ..models import Trace
 from .categorization_agent import categorize_transaction
 from .forecasting_agent import generate_forecast
 from .qa_agent import answer_question
+from .tracing import save_trace
 
 load_dotenv()
 
@@ -95,19 +94,6 @@ async def _classify(request: str) -> dict:
     return {"intent": intent, "transaction_id": parsed.get("transaction_id")}
 
 
-async def _save_trace(owner_id: int, request: str, agent_used: str, trace: list[dict]) -> None:
-    async with AsyncSessionLocal() as session:
-        session.add(
-            Trace(
-                owner_id=owner_id,
-                request_text=request,
-                agent_used=agent_used,
-                steps=trace,
-            )
-        )
-        await session.commit()
-
-
 async def route_request(request: str, owner_id: int) -> dict:
     """Classify a user's request and dispatch it to the right worker agent.
 
@@ -186,6 +172,6 @@ async def route_request(request: str, owner_id: int) -> dict:
         }
         trace.append({"agent": "supervisor", "called_with": {"intent": "receipt"}, "returned": result})
 
-    await _save_trace(owner_id, request, agent_used, trace)
+    await save_trace(owner_id, request, agent_used, trace)
 
     return {"agent_used": agent_used, "result": result, "trace": trace}

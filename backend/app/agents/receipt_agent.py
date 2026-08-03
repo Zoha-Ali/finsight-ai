@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from ..database import AsyncSessionLocal
 from ..models import Transaction, TransactionSource
 from .categorization_agent import categorize_transaction
+from .tracing import save_trace
 
 load_dotenv()
 
@@ -200,4 +201,13 @@ async def process_receipt(image_base64: str, owner_id: int) -> dict:
 
     transactions_created = [await categorize_transaction(tx_id, owner_id) for tx_id in created_ids]
 
-    return {"type": doc_type, "transactions_created": transactions_created}
+    result = {"type": doc_type, "transactions_created": transactions_created}
+
+    await save_trace(
+        owner_id,
+        "Process receipt upload",
+        "receipt",
+        [{"agent": "receipt_agent", "action": "process_receipt", "result": result}],
+    )
+
+    return result
