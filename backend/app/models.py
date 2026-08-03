@@ -2,6 +2,7 @@ import enum
 from datetime import date as date_, datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     Date,
@@ -91,3 +92,14 @@ class Anomaly(Base):
 
     transaction = relationship("Transaction", back_populates="anomaly")
     owner = relationship("User", back_populates="anomalies")
+
+
+class Trace(Base):
+    __tablename__ = "traces"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    request_text = Column(String, nullable=False)
+    agent_used = Column(String, nullable=False)
+    steps = Column(JSON, nullable=False)  # the trace list (agent name, input, output per step)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -4,6 +4,8 @@ import os
 import httpx
 from dotenv import load_dotenv
 
+from ..database import AsyncSessionLocal
+from ..models import Trace
 from .categorization_agent import categorize_transaction
 from .forecasting_agent import generate_forecast
 from .qa_agent import answer_question
@@ -93,12 +95,26 @@ async def _classify(request: str) -> dict:
     return {"intent": intent, "transaction_id": parsed.get("transaction_id")}
 
 
+async def _save_trace(owner_id: int, request: str, agent_used: str, trace: list[dict]) -> None:
+    async with AsyncSessionLocal() as session:
+        session.add(
+            Trace(
+                owner_id=owner_id,
+                request_text=request,
+                agent_used=agent_used,
+                steps=trace,
+            )
+        )
+        await session.commit()
+
+
 async def route_request(request: str, owner_id: int) -> dict:
     """Classify a user's request and dispatch it to the right worker agent.
 
     Builds a trace log of every agent invocation (what it was called with
     and what it returned) alongside the final result, so the full
-    supervisor -> worker flow can be inspected after the fact.
+    supervisor -> worker flow can be inspected after the fact, and
+    persists that trace as a Trace row before returning.
     """
     trace: list[dict] = []
 
@@ -114,6 +130,7 @@ async def route_request(request: str, owner_id: int) -> dict:
     intent = classification["intent"]
 
     if intent == "qa":
+        agent_used = "qa"
         result = await answer_question(request, owner_id)
         trace.append(
             {
@@ -122,9 +139,9 @@ async def route_request(request: str, owner_id: int) -> dict:
                 "returned": result,
             }
         )
-        return {"agent_used": "qa", "result": result, "trace": trace}
 
-    if intent == "forecast":
+    elif intent == "forecast":
+        agent_used = "forecast"
         result = await generate_forecast(owner_id)
         trace.append(
             {
@@ -133,9 +150,9 @@ async def route_request(request: str, owner_id: int) -> dict:
                 "returned": result,
             }
         )
-        return {"agent_used": "forecast", "result": result, "trace": trace}
 
-    if intent == "categorize":
+    elif intent == "categorize":
+        agent_used = "categorize"
         transaction_id = classification.get("transaction_id")
         if transaction_id is None:
             result = {
@@ -149,22 +166,26 @@ async def route_request(request: str, owner_id: int) -> dict:
                     "returned": result,
                 }
             )
-            return {"agent_used": "categorize", "result": result, "trace": trace}
+        else:
+            result = await categorize_transaction(int(transaction_id), owner_id)
+            trace.append(
+                {
+                    "agent": "categorization_agent",
+                    "called_with": {"transaction_id": transaction_id, "owner_id": owner_id},
+                    "returned": result,
+                }
+            )
 
-        result = await categorize_transaction(int(transaction_id), owner_id)
-        trace.append(
-            {
-                "agent": "categorization_agent",
-                "called_with": {"transaction_id": transaction_id, "owner_id": owner_id},
-                "returned": result,
-            }
-        )
-        return {"agent_used": "categorize", "result": result, "trace": trace}
+    else:
+        # intent == "receipt": image uploads never reach this text router
+        # in practice, so this is a defensive dead end rather than a real
+        # path.
+        agent_used = "receipt"
+        result = {
+            "error": "Receipt and statement uploads are handled directly by receipt_agent.process_receipt, not through text routing.",
+        }
+        trace.append({"agent": "supervisor", "called_with": {"intent": "receipt"}, "returned": result})
 
-    # intent == "receipt": image uploads never reach this text router in
-    # practice, so this is a defensive dead end rather than a real path.
-    result = {
-        "error": "Receipt and statement uploads are handled directly by receipt_agent.process_receipt, not through text routing.",
-    }
-    trace.append({"agent": "supervisor", "called_with": {"intent": "receipt"}, "returned": result})
-    return {"agent_used": "receipt", "result": result, "trace": trace}
+    await _save_trace(owner_id, request, agent_used, trace)
+
+    return {"agent_used": agent_used, "result": result, "trace": trace}
