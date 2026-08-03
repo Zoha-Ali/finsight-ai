@@ -22,7 +22,9 @@ if DATABASE_URL:
         DATABASE_URL,
     )
 
-engine = create_async_engine(DATABASE_URL, echo=True, connect_args={"ssl": "require"})
+engine = create_async_engine(
+    DATABASE_URL, echo=True, connect_args={"ssl": "require"}, pool_pre_ping=True
+)
 
 AsyncSessionLocal = async_sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False
