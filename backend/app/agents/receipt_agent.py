@@ -20,19 +20,22 @@ ANTHROPIC_VERSION = "2023-06-01"
 MODEL = "claude-sonnet-5"
 
 EXTRACTION_SYSTEM_PROMPT = (
-    "You extract structured data from images of receipts and bank/credit "
-    "card statements. Decide whether the image shows a single purchase "
-    "receipt or a statement listing multiple transactions, then extract "
-    "every transaction you can see.\n\n"
+    "You extract structured data from receipt and bank/credit card "
+    "statement files - either images or PDFs, including multi-page PDF "
+    "statements. Decide whether the file shows a single purchase receipt "
+    "or a statement listing multiple transactions, then extract every "
+    "transaction you can see across the entire file, including every page "
+    "of a multi-page PDF.\n\n"
     "Respond with ONLY a single raw JSON object - no markdown code fences, "
     "no commentary - matching exactly this schema:\n"
     '{"type": "receipt" | "statement", "transactions": '
     '[{"merchant": string, "amount": number, "date": "YYYY-MM-DD" | null}]}\n\n'
     'For a single receipt, "transactions" has exactly one item. For a '
-    "statement, include one item per line-item transaction - don't omit a "
-    "transaction just because one field is hard to read.\n\n"
+    "statement, include one item per line-item transaction across all "
+    "pages - don't omit a transaction just because one field is hard to "
+    "read.\n\n"
     'For the "date" field specifically: only return a date you can '
-    "actually read on the image. If no date is visible, or it's too "
+    "actually read in the file. If no date is visible, or it's too "
     "blurry, cut off, or ambiguous to read with confidence, return null. "
     "Do NOT infer, estimate, or guess a plausible-sounding date from "
     "context - never assume it's today's date, and never guess a year. "
@@ -41,12 +44,14 @@ EXTRACTION_SYSTEM_PROMPT = (
 
 
 def _detect_media_type(raw_bytes: bytes) -> str:
-    """Sniff an image's media type from its magic number.
+    """Sniff a file's media type from its magic number.
 
-    Anthropic's vision API rejects a mismatch between declared media_type
-    and the image's actual encoding, so a fixed default (e.g. always
+    Anthropic's API rejects a mismatch between declared media_type and
+    the file's actual encoding, so a fixed default (e.g. always
     "image/jpeg") breaks for any other format - this has to be detected.
     """
+    if raw_bytes.startswith(b"%PDF-"):
+        return "application/pdf"
     if raw_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
         return "image/png"
     if raw_bytes.startswith(b"\xff\xd8\xff"):
@@ -58,24 +63,37 @@ def _detect_media_type(raw_bytes: bytes) -> str:
     return "image/jpeg"
 
 
-def _split_data_uri(image_base64: str) -> tuple[str, str]:
+def _split_data_uri(file_base64: str) -> tuple[str, str]:
     """Accept either a raw base64 string or a data:<media_type>;base64,<data>
     URI, and return (media_type, data). When no explicit media_type is
-    available, it's sniffed from the decoded image bytes' magic number.
+    available, it's sniffed from the decoded file bytes' magic number.
     """
-    if image_base64.startswith("data:"):
-        header, _, data = image_base64.partition(",")
+    if file_base64.startswith("data:"):
+        header, _, data = file_base64.partition(",")
         media_type = header[len("data:"):].split(";")[0]
         if media_type:
             return media_type, data
     else:
-        data = image_base64
+        data = file_base64
 
     try:
         raw_bytes = base64.b64decode(data[:64])
     except (ValueError, binascii.Error):
         raw_bytes = b""
     return _detect_media_type(raw_bytes), data
+
+
+def _content_block(media_type: str, data: str) -> dict:
+    """Build the right Messages API content block for this file type.
+
+    Claude accepts PDFs natively as "document" blocks (Anthropic's API
+    rasterizes and reads every page server-side - including multi-page
+    statements - in a single call, so no local PDF-to-image conversion
+    library is needed). Anything else goes through as an "image" block,
+    same as before.
+    """
+    block_type = "document" if media_type == "application/pdf" else "image"
+    return {"type": block_type, "source": {"type": "base64", "media_type": media_type, "data": data}}
 
 
 def _strip_code_fence(text: str) -> str:
@@ -132,15 +150,15 @@ async def _call_model(messages: list[dict]) -> str:
 
 
 async def _extract(media_type: str, data: str) -> dict:
-    """Run the vision extraction call, retrying once if the model's
-    response isn't valid JSON.
+    """Run the extraction call, retrying once if the model's response
+    isn't valid JSON.
     """
     messages: list[dict] = [
         {
             "role": "user",
             "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}},
-                {"type": "text", "text": "Extract the transaction data from this image as instructed."},
+                _content_block(media_type, data),
+                {"type": "text", "text": "Extract the transaction data from this file as instructed."},
             ],
         }
     ]
@@ -167,23 +185,31 @@ async def _extract(media_type: str, data: str) -> dict:
     raise ValueError(f"Model did not return valid JSON after a retry: {last_error}")
 
 
-async def process_receipt(image_base64: str, owner_id: int) -> dict:
-    """Extract transactions from a receipt/statement image and record them.
+async def process_receipt(file_base64: str, owner_id: int) -> dict:
+    """Extract transactions from a receipt/statement file and record them.
 
-    Uses claude-sonnet-5's vision input to classify the image as a single
-    receipt or a multi-line statement and extract each transaction (merchant,
-    amount, date) as strict JSON. Each extracted transaction is inserted
-    directly (source="receipt") - bypassing the MCP record_transaction tool,
-    since that tool hardcodes source="manual" and today's date, neither of
-    which fit receipt-extracted data - then run through
-    categorize_transaction for categorization and anomaly detection.
+    Accepts either an image or a PDF (bank/credit card statements are
+    often PDFs) - the file type is sniffed from its magic bytes, same
+    pattern as the image media_type detection. PDFs, including
+    multi-page statements, go through Claude's native "document" content
+    block in a single API call (Anthropic's API reads every page
+    server-side), so all pages are extracted and combined into one result
+    without any local PDF-to-image conversion step.
+
+    Uses claude-sonnet-5 to classify the file as a single receipt or a
+    multi-line statement and extract each transaction (merchant, amount,
+    date) as strict JSON. Each extracted transaction is inserted directly
+    (source="receipt") - bypassing the MCP record_transaction tool, since
+    that tool hardcodes source="manual" and today's date, neither of which
+    fit receipt-extracted data - then run through categorize_transaction
+    for categorization and anomaly detection.
     """
-    media_type, data = _split_data_uri(image_base64)
+    media_type, data = _split_data_uri(file_base64)
     extracted = await _extract(media_type, data)
 
     raw_transactions = extracted.get("transactions") or []
     if not raw_transactions:
-        raise ValueError("No transactions could be extracted from the image")
+        raise ValueError("No transactions could be extracted from the file")
 
     doc_type = extracted.get("type")
     if doc_type not in ("receipt", "statement"):
