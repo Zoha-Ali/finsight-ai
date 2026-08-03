@@ -21,6 +21,8 @@ import ProtectedRoute from '@/components/ProtectedRoute'
 import Layout from '@/components/Layout'
 import LoginPage from '@/routes/LoginPage'
 import DashboardPage from '@/routes/DashboardPage'
+import ForecastPage from '@/routes/ForecastPage'
+import ReceiptsPage from '@/routes/ReceiptsPage'
 import ChatPage from '@/routes/ChatPage'
 import { isAuthenticated } from '@/lib/auth'
 
@@ -33,6 +35,8 @@ function App() {
         <Route element={<ProtectedRoute />}>
           <Route element={<Layout />}>
             <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/forecast" element={<ForecastPage />} />
+            <Route path="/receipts" element={<ReceiptsPage />} />
             <Route path="/chat" element={<ChatPage />} />
           </Route>
         </Route>

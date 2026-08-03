@@ -37,6 +37,36 @@ export interface QAResponse {
   table: Record<string, unknown>[] | null
 }
 
+export interface ForecastEntry {
+  category: string
+  spent_so_far: number
+  projected_total: number
+  budget_limit: number | null
+  on_track_to_overspend: boolean
+}
+
+export interface ForecastResponse {
+  forecasts: ForecastEntry[]
+  summary: string
+}
+
+export interface CategorizeResult {
+  transaction_id: number
+  category: string
+  category_id: number
+  is_anomaly: boolean
+  reason: string | null
+  date_estimated?: boolean | null
+}
+
+export type ReceiptDocType = 'receipt' | 'statement'
+
+export interface ReceiptUploadResponse {
+  filename: string | null
+  type: ReceiptDocType
+  transactions_created: CategorizeResult[]
+}
+
 export interface ApiError {
   detail: string
 }

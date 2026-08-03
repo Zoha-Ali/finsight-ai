@@ -23,6 +23,12 @@ export default function Layout() {
             <NavLink to="/dashboard" className={linkClass}>
               Dashboard
             </NavLink>
+            <NavLink to="/forecast" className={linkClass}>
+              Forecast
+            </NavLink>
+            <NavLink to="/receipts" className={linkClass}>
+              Receipts
+            </NavLink>
             <NavLink to="/chat" className={linkClass}>
               Chat
             </NavLink>
