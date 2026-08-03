@@ -95,3 +95,37 @@ class QAResponse(BaseModel):
     agent_used: str
     result: dict
     trace: list[dict]
+
+
+class CategoryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+
+
+class BudgetOut(BaseModel):
+    id: int
+    category_id: int
+    category_name: str
+    monthly_limit: float
+
+
+class AnomalyOut(BaseModel):
+    id: int
+    reason: str
+    flagged_at: datetime
+    transaction_id: int
+    merchant: str
+    amount: float
+    date: date
+
+
+class TraceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    request_text: str
+    agent_used: str
+    steps: list[dict]
+    created_at: datetime
