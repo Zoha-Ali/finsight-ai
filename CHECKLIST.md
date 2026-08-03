@@ -7,14 +7,14 @@
 - [x] JWT auth (get_current_user)
 - [x] Stub routes for 5 agent endpoints
 - [x] README with architecture diagram
-- [ ] Frontend skeleton (routes stubbed)
+- [x] Frontend skeleton (routes stubbed)
 
 ## Week 6 — Core Feature Development
 - [ ] Core business logic (real transaction CRUD, not stubs)
 - [ ] MCP server implementation (tools: get_transactions, record_transaction, get_budget, get_monthly_summary, get_anomalies)
 - [ ] Supervisor + 5 worker agents implemented
 - [ ] Memory layer integrated
-- [ ] Frontend wired to live backend
+- [x] Frontend wired to live backend
 - [ ] Test suite (target 70%+ coverage on core logic)
 
 ## Week 7 — Advanced Features & Polish

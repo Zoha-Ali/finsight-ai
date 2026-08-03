@@ -52,6 +52,14 @@ alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
+```bash
+cd finsight-ai/frontend
+npm install
+npm run dev
+```
+
+The frontend expects the backend at `http://localhost:8000` by default (override with a `VITE_API_BASE_URL` env var); the backend allows CORS from `http://localhost:5173`.
+
 ## Status
 
 **Built:**
@@ -59,9 +67,10 @@ uvicorn app.main:app --reload
 - 5 data models: User, Category, Transaction, Budget, Anomaly
 - Alembic migrations configured
 - JWT auth (`get_current_user` dependency, owner-scoped)
-- 5 stub routes: transactions, receipts, categorize, forecast, qa
+- 5 routes wired to real agents: transactions, receipts, categorize, forecast, qa
+- Frontend (React + Vite + TypeScript + Tailwind): login/signup, dashboard, chat
 
 **Next:**
-- Agent logic (Supervisor + 5 workers, ReAct loop)
-- MCP server implementation
-- Frontend (React + Vite)
+- Memory layer
+- Test suite
+- Deployment
