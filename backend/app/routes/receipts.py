@@ -37,6 +37,12 @@ async def upload_receipt(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
+    if result["type"] == "not_a_receipt":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This doesn't look like a receipt or statement - no transactions were saved.",
+        )
+
     return ReceiptUploadResponse(
         filename=file.filename,
         type=result["type"],

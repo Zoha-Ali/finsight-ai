@@ -26,9 +26,15 @@ EXTRACTION_SYSTEM_PROMPT = (
     "or a statement listing multiple transactions, then extract every "
     "transaction you can see across the entire file, including every page "
     "of a multi-page PDF.\n\n"
+    "If the file is NOT actually a receipt or bank/credit statement - an "
+    "irrelevant image, placeholder or lorem ipsum text, a blank page, or "
+    "anything else with no real transaction data on it - do not force "
+    "values into the schema below and do not invent a plausible-looking "
+    "transaction. Instead respond with exactly "
+    '{"type": "not_a_receipt", "transactions": []}.\n\n'
     "Respond with ONLY a single raw JSON object - no markdown code fences, "
     "no commentary - matching exactly this schema:\n"
-    '{"type": "receipt" | "statement", "transactions": '
+    '{"type": "receipt" | "statement" | "not_a_receipt", "transactions": '
     '[{"merchant": string, "amount": number, "date": "YYYY-MM-DD" | null}]}\n\n'
     'For a single receipt, "transactions" has exactly one item. For a '
     "statement, include one item per line-item transaction across all "
@@ -105,6 +111,30 @@ def _strip_code_fence(text: str) -> str:
         if text.lower().startswith("json"):
             text = text[4:]
     return text.strip()
+
+
+def _clean_merchant(value) -> str | None:
+    """Return a usable merchant name, or None if it's missing/blank.
+
+    str(None) silently produces the text "None" and str("") produces "",
+    neither of which raises - so this has to check explicitly rather than
+    rely on a type-coercion try/except to catch a missing merchant.
+    """
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _is_valid_amount(value) -> bool:
+    """True only for a real, positive number - not None, not a bool
+    (isinstance(True, int) is True in Python), not zero or negative.
+    """
+    if value is None or isinstance(value, bool):
+        return False
+    if not isinstance(value, (int, float)):
+        return False
+    return value > 0
 
 
 def _parse_date(value) -> tuple[date, bool]:
@@ -207,11 +237,22 @@ async def process_receipt(file_base64: str, owner_id: int) -> dict:
     media_type, data = _split_data_uri(file_base64)
     extracted = await _extract(media_type, data)
 
+    doc_type = extracted.get("type")
+
+    if doc_type == "not_a_receipt":
+        result = {"type": "not_a_receipt", "transactions_created": []}
+        await save_trace(
+            owner_id,
+            "Process receipt upload",
+            "receipt",
+            [{"agent": "receipt_agent", "action": "process_receipt", "result": result}],
+        )
+        return result
+
     raw_transactions = extracted.get("transactions") or []
     if not raw_transactions:
         raise ValueError("No transactions could be extracted from the file")
 
-    doc_type = extracted.get("type")
     if doc_type not in ("receipt", "statement"):
         doc_type = "statement" if len(raw_transactions) > 1 else "receipt"
 
@@ -219,10 +260,9 @@ async def process_receipt(file_base64: str, owner_id: int) -> dict:
     date_estimated_by_id: dict[int, bool] = {}
     async with AsyncSessionLocal() as session:
         for item in raw_transactions:
-            try:
-                merchant = str(item["merchant"])
-                amount = float(item["amount"])
-            except (KeyError, TypeError, ValueError):
+            merchant = _clean_merchant(item.get("merchant"))
+            amount = item.get("amount")
+            if merchant is None or not _is_valid_amount(amount):
                 continue
 
             tx_date, date_estimated = _parse_date(item.get("date"))
@@ -230,7 +270,7 @@ async def process_receipt(file_base64: str, owner_id: int) -> dict:
             transaction = Transaction(
                 owner_id=owner_id,
                 merchant=merchant,
-                amount=amount,
+                amount=float(amount),
                 date=tx_date,
                 source=TransactionSource.receipt,
             )
