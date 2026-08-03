@@ -102,13 +102,59 @@ def _system_prompt() -> str:
         "tools available to you. Never invent, estimate, or guess a number "
         "- if the tools don't give you enough to answer precisely, say so "
         "instead of making something up. Call as few tools as necessary to "
-        "answer the question, then give a clear, concise natural-language "
-        f"answer. Today's date is {date.today().isoformat()}."
+        "answer the question.\n\n"
+        "Once you have everything you need and are ready to give your "
+        "final answer (i.e. you are not calling another tool), respond "
+        "with ONLY a single raw JSON object - no markdown code fences, no "
+        "commentary - matching exactly this schema:\n"
+        '{"answer": string, "table": array of objects, or null}\n\n'
+        'Populate "table" when the data naturally forms a list of similar '
+        "rows - multiple transactions, a spending-by-category breakdown, a "
+        "list of anomalies, etc. Every object in the array should share "
+        "the same keys, named after the actual data (e.g. merchant, "
+        'amount, date, category). Leave "table" null for a single-value '
+        "answer (a total, a yes/no, a single number) where there's no "
+        'natural list of rows. "answer" should always be a clear, concise '
+        "natural-language summary regardless of whether table is "
+        f"populated. Today's date is {date.today().isoformat()}."
     )
 
 
 def _extract_text(content: list[dict]) -> str:
     return "".join(block["text"] for block in content if block.get("type") == "text").strip()
+
+
+def _strip_code_fence(text: str) -> str:
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+        if text.endswith("```"):
+            text = text[:-3]
+        if text.lower().startswith("json"):
+            text = text[4:]
+    return text.strip()
+
+
+def _parse_final_answer(text: str) -> tuple[str, list[dict] | None]:
+    """Parse the model's final response as {"answer": str, "table": ...}.
+
+    Falls back to treating the whole response as plain-text prose with no
+    table if it isn't valid JSON (or doesn't have the expected shape),
+    rather than crashing on a formatting slip.
+    """
+    try:
+        parsed = json.loads(_strip_code_fence(text))
+    except json.JSONDecodeError:
+        return text, None
+
+    if not isinstance(parsed, dict) or "answer" not in parsed:
+        return text, None
+
+    table = parsed.get("table")
+    if not isinstance(table, list):
+        table = None
+
+    return str(parsed["answer"]), table
 
 
 async def _call_model(messages: list[dict], allow_tools: bool) -> dict:
@@ -153,7 +199,10 @@ async def answer_question(question: str, owner_id: int) -> dict:
     real tool functions are executed server-side scoped to owner_id (the
     model never sees or controls owner_id, so it can't be redirected to
     another user's data), and results are fed back to the model until it
-    gives a final answer or the tool-call cap is reached.
+    gives a final answer or the tool-call cap is reached. The final answer
+    includes an optional "table" - populated with rows when the data is
+    naturally tabular (e.g. a transaction list or category breakdown),
+    left null for single-value answers.
     """
     messages: list[dict] = [{"role": "user", "content": question}]
     tools_used: list[str] = []
@@ -164,7 +213,8 @@ async def answer_question(question: str, owner_id: int) -> dict:
         messages.append({"role": "assistant", "content": content})
 
         if response.get("stop_reason") != "tool_use":
-            return {"answer": _extract_text(content), "tools_used": tools_used}
+            answer, table = _parse_final_answer(_extract_text(content))
+            return {"answer": answer, "tools_used": tools_used, "table": table}
 
         tool_results = []
         for block in content:
@@ -197,11 +247,13 @@ async def answer_question(question: str, owner_id: int) -> dict:
             return {
                 "answer": _extract_text(content) or "I wasn't able to determine an answer.",
                 "tools_used": tools_used,
+                "table": None,
             }
 
         messages.append({"role": "user", "content": tool_results})
 
     # Tool-call cap reached and the model still wanted another tool call;
-    # force a final text-only answer from whatever's been gathered so far.
+    # force a final answer from whatever's been gathered so far.
     final_response = await _call_model(messages, allow_tools=False)
-    return {"answer": _extract_text(final_response["content"]), "tools_used": tools_used}
+    answer, table = _parse_final_answer(_extract_text(final_response["content"]))
+    return {"answer": answer, "tools_used": tools_used, "table": table}

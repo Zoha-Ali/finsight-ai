@@ -100,7 +100,9 @@ async def route_request(request: str, owner_id: int) -> dict:
     Builds a trace log of every agent invocation (what it was called with
     and what it returned) alongside the final result, so the full
     supervisor -> worker flow can be inspected after the fact, and
-    persists that trace as a Trace row before returning.
+    persists that trace as a Trace row before returning. When agent_used
+    is "qa", qa_agent's optional tabular data is lifted to a top-level
+    "table" field; it's null for every other intent.
     """
     trace: list[dict] = []
 
@@ -174,4 +176,6 @@ async def route_request(request: str, owner_id: int) -> dict:
 
     await save_trace(owner_id, request, agent_used, trace)
 
-    return {"agent_used": agent_used, "result": result, "trace": trace}
+    table = result.get("table") if agent_used == "qa" else None
+
+    return {"agent_used": agent_used, "result": result, "trace": trace, "table": table}

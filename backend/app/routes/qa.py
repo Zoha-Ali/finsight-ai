@@ -23,4 +23,5 @@ async def ask_question(
         agent_used=result["agent_used"],
         result=result["result"],
         trace=result["trace"],
+        table=result.get("table"),
     )

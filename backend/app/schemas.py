@@ -95,6 +95,7 @@ class QAResponse(BaseModel):
     agent_used: str
     result: dict
     trace: list[dict]
+    table: Optional[list[dict]] = None
 
 
 class CategoryOut(BaseModel):
