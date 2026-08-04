@@ -80,6 +80,8 @@ class ForecastEntry(BaseModel):
     spent_so_far: float
     projected_total: float
     budget_limit: Optional[float] = None
+    historical_average: Optional[float] = None
+    comparison_type: str
     on_track_to_overspend: bool
 
 

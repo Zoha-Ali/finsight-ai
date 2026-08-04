@@ -2,7 +2,7 @@ from datetime import date
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
-from sqlalchemy import extract, func, select
+from sqlalchemy import and_, extract, func, not_, select
 
 from .database import AsyncSessionLocal
 from .models import Anomaly, Budget, Category, Transaction, TransactionSource
@@ -131,6 +131,47 @@ async def get_monthly_summary(owner_id: int, month: int, year: int) -> list[dict
             }
             for category_id, category_name, total_spent in result.all()
         ]
+
+
+@mcp.tool()
+async def get_historical_monthly_average(
+    owner_id: int,
+    category_id: int,
+    exclude_month: int,
+    exclude_year: int,
+) -> Optional[dict]:
+    """Return a user's average monthly spending in a category from past
+    months, excluding one specific month/year (typically the current,
+    still-in-progress month, since it isn't over yet and would skew the
+    average low).
+
+    Returns None if there's no prior spending in that category at all.
+    Use this as a fallback baseline for forecasting when the user hasn't
+    set an explicit budget for a category.
+    """
+    async with AsyncSessionLocal() as session:
+        month_expr = extract("month", Transaction.date)
+        year_expr = extract("year", Transaction.date)
+
+        monthly_totals = (
+            select(func.sum(Transaction.amount).label("monthly_total"))
+            .where(
+                Transaction.owner_id == owner_id,
+                Transaction.category_id == category_id,
+                not_(and_(month_expr == exclude_month, year_expr == exclude_year)),
+            )
+            .group_by(year_expr, month_expr)
+        ).subquery()
+
+        result = await session.execute(
+            select(func.avg(monthly_totals.c.monthly_total), func.count()).select_from(monthly_totals)
+        )
+        average, months_counted = result.one()
+
+        if average is None or months_counted == 0:
+            return None
+
+        return {"average_monthly_spend": float(average), "months_counted": months_counted}
 
 
 @mcp.tool()

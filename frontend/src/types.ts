@@ -39,11 +39,15 @@ export interface QAResponse {
   table: Record<string, unknown>[] | null
 }
 
+export type ForecastComparisonType = 'budget' | 'historical_average' | 'no_data'
+
 export interface ForecastEntry {
   category: string
   spent_so_far: number
   projected_total: number
   budget_limit: number | null
+  historical_average: number | null
+  comparison_type: ForecastComparisonType
   on_track_to_overspend: boolean
 }
 

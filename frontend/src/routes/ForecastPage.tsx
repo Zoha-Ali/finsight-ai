@@ -1,6 +1,35 @@
 import { useEffect, useState } from 'react'
 import { api, getErrorMessage } from '@/lib/api'
-import type { ForecastResponse } from '@/types'
+import type { ForecastEntry, ForecastResponse } from '@/types'
+
+function comparisonLabel(entry: ForecastEntry): string {
+  switch (entry.comparison_type) {
+    case 'budget':
+      return 'vs budget'
+    case 'historical_average':
+      return 'vs your average'
+    default:
+      return 'insufficient history'
+  }
+}
+
+function statusLabel(entry: ForecastEntry): { text: string; danger: boolean } {
+  if (entry.comparison_type === 'no_data') {
+    return { text: 'No data yet', danger: false }
+  }
+  if (entry.on_track_to_overspend) {
+    return entry.comparison_type === 'budget'
+      ? { text: 'Over budget', danger: true }
+      : { text: 'Above your average', danger: true }
+  }
+  return { text: 'On track', danger: false }
+}
+
+function baselineValue(entry: ForecastEntry): number | null {
+  if (entry.comparison_type === 'budget') return entry.budget_limit
+  if (entry.comparison_type === 'historical_average') return entry.historical_average
+  return null
+}
 
 export default function ForecastPage() {
   const [data, setData] = useState<ForecastResponse | null>(null)
@@ -62,38 +91,45 @@ export default function ForecastPage() {
                       <th className="px-5 py-3 font-medium">Category</th>
                       <th className="px-5 py-3 font-medium">Spent so far</th>
                       <th className="px-5 py-3 font-medium">Projected total</th>
-                      <th className="px-5 py-3 font-medium">Budget</th>
+                      <th className="px-5 py-3 font-medium">Baseline</th>
                       <th className="px-5 py-3 font-medium">Status</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.forecasts.map((entry) => (
-                      <tr key={entry.category} className="border-b border-border last:border-0">
-                        <td className="px-5 py-3 text-ink capitalize">{entry.category}</td>
-                        <td className="px-5 py-3 tabular-figures text-ink">
-                          ${entry.spent_so_far.toFixed(2)}
-                        </td>
-                        <td
-                          className={`px-5 py-3 tabular-figures font-medium ${
-                            entry.on_track_to_overspend ? 'text-danger' : 'text-ink'
-                          }`}
-                        >
-                          ${entry.projected_total.toFixed(2)}
-                        </td>
-                        <td className="px-5 py-3 tabular-figures text-ink-muted">
-                          {entry.budget_limit !== null ? `$${entry.budget_limit.toFixed(2)}` : '—'}
-                        </td>
-                        <td className="px-5 py-3">
-                          {entry.on_track_to_overspend ? (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-danger-soft text-danger text-xs font-medium px-2 py-0.5 border border-danger/20">
-                              Over budget
-                            </span>
-                          ) : (
-                            <span className="text-ink-muted text-xs">On track</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                    {data.forecasts.map((entry) => {
+                      const status = statusLabel(entry)
+                      const baseline = baselineValue(entry)
+                      return (
+                        <tr key={entry.category} className="border-b border-border last:border-0">
+                          <td className="px-5 py-3 text-ink capitalize">{entry.category}</td>
+                          <td className="px-5 py-3 tabular-figures text-ink">
+                            ${entry.spent_so_far.toFixed(2)}
+                          </td>
+                          <td
+                            className={`px-5 py-3 tabular-figures font-medium ${
+                              entry.on_track_to_overspend ? 'text-danger' : 'text-ink'
+                            }`}
+                          >
+                            ${entry.projected_total.toFixed(2)}
+                          </td>
+                          <td className="px-5 py-3 tabular-figures text-ink-muted">
+                            {baseline !== null ? `$${baseline.toFixed(2)}` : '—'}
+                            <div className="text-xs italic text-ink-muted/70 mt-0.5">
+                              {comparisonLabel(entry)}
+                            </div>
+                          </td>
+                          <td className="px-5 py-3">
+                            {status.danger ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-danger-soft text-danger text-xs font-medium px-2 py-0.5 border border-danger/20">
+                                {status.text}
+                              </span>
+                            ) : (
+                              <span className="text-ink-muted text-xs">{status.text}</span>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
