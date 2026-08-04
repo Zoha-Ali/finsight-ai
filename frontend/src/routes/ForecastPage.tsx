@@ -42,6 +42,7 @@ export default function ForecastPage() {
   const [budgetLimit, setBudgetLimit] = useState('')
   const [settingBudget, setSettingBudget] = useState(false)
   const [budgetError, setBudgetError] = useState<string | null>(null)
+  const [budgetActionPending, setBudgetActionPending] = useState<number | null>(null)
 
   async function loadForecast() {
     setLoading(true)
@@ -91,6 +92,38 @@ export default function ForecastPage() {
       setBudgetError(getErrorMessage(err, 'Could not set that budget.'))
     } finally {
       setSettingBudget(false)
+    }
+  }
+
+  async function handleUpdateBudget(e: FormEvent<HTMLFormElement>, categoryId: number) {
+    e.preventDefault()
+    const limit = new FormData(e.currentTarget).get('limit')
+    if (!limit) return
+
+    setBudgetError(null)
+    setBudgetActionPending(categoryId)
+
+    try {
+      await api.post('/budgets', { category_id: categoryId, monthly_limit: Number(limit) })
+      await loadForecast()
+    } catch (err) {
+      setBudgetError(getErrorMessage(err, 'Could not update that budget.'))
+    } finally {
+      setBudgetActionPending(null)
+    }
+  }
+
+  async function handleRemoveBudget(categoryId: number) {
+    setBudgetError(null)
+    setBudgetActionPending(categoryId)
+
+    try {
+      await api.delete(`/budgets/${categoryId}`)
+      await loadForecast()
+    } catch (err) {
+      setBudgetError(getErrorMessage(err, 'Could not remove that budget.'))
+    } finally {
+      setBudgetActionPending(null)
     }
   }
 
@@ -213,10 +246,47 @@ export default function ForecastPage() {
                             ${entry.projected_total.toFixed(2)}
                           </td>
                           <td className="px-5 py-3 tabular-figures text-ink-muted">
-                            {baseline !== null ? `$${baseline.toFixed(2)}` : '—'}
-                            <div className="text-xs italic text-ink-muted/70 mt-0.5">
-                              {comparisonLabel(entry)}
-                            </div>
+                            {entry.comparison_type === 'budget' && entry.category_id !== null ? (
+                              <form
+                                key={`${entry.category_id}-${entry.budget_limit}`}
+                                onSubmit={(e) => handleUpdateBudget(e, entry.category_id as number)}
+                                className="flex items-center gap-1.5"
+                              >
+                                <span>$</span>
+                                <input
+                                  name="limit"
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  required
+                                  defaultValue={entry.budget_limit ?? undefined}
+                                  disabled={budgetActionPending === entry.category_id}
+                                  className="w-20 rounded border border-border px-1.5 py-1 text-xs tabular-figures text-ink focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary disabled:opacity-60"
+                                />
+                                <button
+                                  type="submit"
+                                  disabled={budgetActionPending === entry.category_id}
+                                  className="text-xs font-medium text-primary hover:text-primary-hover disabled:opacity-60"
+                                >
+                                  Update
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveBudget(entry.category_id as number)}
+                                  disabled={budgetActionPending === entry.category_id}
+                                  className="text-xs font-medium text-ink-muted hover:text-danger disabled:opacity-60"
+                                >
+                                  Remove
+                                </button>
+                              </form>
+                            ) : (
+                              <>
+                                {baseline !== null ? `$${baseline.toFixed(2)}` : '—'}
+                                <div className="text-xs italic text-ink-muted/70 mt-0.5">
+                                  {comparisonLabel(entry)}
+                                </div>
+                              </>
+                            )}
                           </td>
                           <td className="px-5 py-3">
                             {status.danger ? (

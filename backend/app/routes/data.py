@@ -82,6 +82,28 @@ async def create_or_update_budget(
     )
 
 
+@router.delete("/budgets/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_budget(
+    category_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    budget = (
+        await db.execute(
+            select(Budget).where(
+                Budget.owner_id == current_user.id,
+                Budget.category_id == category_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if budget is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No budget set for this category")
+
+    await db.delete(budget)
+    await db.commit()
+
+
 @router.get("/anomalies", response_model=list[AnomalyOut])
 async def list_anomalies(
     current_user: User = Depends(get_current_user),

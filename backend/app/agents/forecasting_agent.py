@@ -147,6 +147,7 @@ async def generate_forecast(owner_id: int) -> dict:
         forecasts.append(
             {
                 "category": row["category_name"] or "uncategorized",
+                "category_id": row["category_id"],
                 "spent_so_far": spent_so_far,
                 "projected_total": projected_total,
                 "budget_limit": budget_limit,

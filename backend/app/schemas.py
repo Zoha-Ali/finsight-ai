@@ -77,6 +77,7 @@ class ReceiptUploadResponse(BaseModel):
 
 class ForecastEntry(BaseModel):
     category: str
+    category_id: Optional[int] = None
     spent_so_far: float
     projected_total: float
     budget_limit: Optional[float] = None

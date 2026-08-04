@@ -43,6 +43,7 @@ export type ForecastComparisonType = 'budget' | 'historical_average' | 'no_data'
 
 export interface ForecastEntry {
   category: string
+  category_id: number | null
   spent_so_far: number
   projected_total: number
   budget_limit: number | null
