@@ -56,6 +56,18 @@ export interface ForecastResponse {
   summary: string
 }
 
+export interface Category {
+  id: number
+  name: string
+}
+
+export interface BudgetOut {
+  id: number
+  category_id: number
+  category_name: string
+  monthly_limit: number
+}
+
 export interface CategorizeResult {
   transaction_id: number
   category: string
