@@ -296,6 +296,7 @@ async def process_receipt(file_base64: str, owner_id: int) -> dict:
                 merchant=merchant,
                 amount=float(amount),
                 date=tx_date,
+                date_estimated=date_estimated,
                 source=TransactionSource.receipt,
             )
             session.add(transaction)

@@ -54,6 +54,7 @@ class Transaction(Base):
     merchant = Column(String, nullable=False)
     amount = Column(Float, nullable=False)
     date = Column(Date, nullable=False, default=date_.today)
+    date_estimated = Column(Boolean, nullable=False, default=False)
     source = Column(Enum(TransactionSource), nullable=False, default=TransactionSource.manual)
     is_anomaly = Column(Boolean, nullable=False, default=False)
     is_over_budget = Column(Boolean, nullable=False, default=False)

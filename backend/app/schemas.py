@@ -46,6 +46,7 @@ class TransactionOut(BaseModel):
     merchant: str
     amount: float
     date: date
+    date_estimated: bool
     source: TransactionSource
     is_anomaly: bool
     is_over_budget: bool

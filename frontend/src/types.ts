@@ -14,6 +14,7 @@ export interface Transaction {
   merchant: string
   amount: number
   date: string
+  date_estimated: boolean
   source: TransactionSource
   is_anomaly: boolean
   is_over_budget: boolean

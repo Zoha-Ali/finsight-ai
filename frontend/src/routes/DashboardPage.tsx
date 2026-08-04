@@ -172,7 +172,17 @@ export default function DashboardPage() {
                   <tr key={tx.id} className="border-b border-border last:border-0">
                     <td className="px-5 py-3 text-ink">{tx.merchant}</td>
                     <td className="px-5 py-3 tabular-figures text-ink">${tx.amount.toFixed(2)}</td>
-                    <td className="px-5 py-3 text-ink-muted">{tx.date}</td>
+                    <td className="px-5 py-3 text-ink-muted">
+                      {tx.date}
+                      {tx.date_estimated && (
+                        <span
+                          className="ml-1.5 text-xs italic text-ink-muted/70"
+                          title="The exact date wasn't legible on the uploaded receipt, so today's date was used instead."
+                        >
+                          (estimated)
+                        </span>
+                      )}
+                    </td>
                     <td className="px-5 py-3 text-ink-muted capitalize">{tx.source}</td>
                     <td className="px-5 py-3 text-ink-muted">
                       {tx.category_id !== null ? `#${tx.category_id}` : '—'}
