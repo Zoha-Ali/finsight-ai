@@ -5,10 +5,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..agents.categorization_agent import categorize_transaction
 from ..auth import get_current_user
 from ..database import get_db
-from ..models import Anomaly, Transaction, TransactionSource, User
+from ..models import Anomaly, Category, Transaction, TransactionSource, User
 from ..schemas import TransactionCreate, TransactionOut
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
+
+
+def _to_transaction_out(transaction: Transaction, category_name: str | None) -> TransactionOut:
+    return TransactionOut(
+        id=transaction.id,
+        merchant=transaction.merchant,
+        amount=transaction.amount,
+        date=transaction.date,
+        date_estimated=transaction.date_estimated,
+        source=transaction.source,
+        is_anomaly=transaction.is_anomaly,
+        is_over_budget=transaction.is_over_budget,
+        created_at=transaction.created_at,
+        owner_id=transaction.owner_id,
+        category_id=transaction.category_id,
+        category_name=category_name,
+    )
 
 
 @router.post("", response_model=TransactionOut)
@@ -16,7 +33,7 @@ async def create_transaction(
     payload: TransactionCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Transaction:
+) -> TransactionOut:
     transaction = Transaction(
         owner_id=current_user.id,
         merchant=payload.merchant,
@@ -32,20 +49,27 @@ async def create_transaction(
     await categorize_transaction(transaction.id, current_user.id)
     await db.refresh(transaction)
 
-    return transaction
+    category_name = None
+    if transaction.category_id is not None:
+        category_name = (
+            await db.execute(select(Category.name).where(Category.id == transaction.category_id))
+        ).scalar_one_or_none()
+
+    return _to_transaction_out(transaction, category_name)
 
 
 @router.get("", response_model=list[TransactionOut])
 async def list_transactions(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> list[Transaction]:
+) -> list[TransactionOut]:
     result = await db.execute(
-        select(Transaction)
+        select(Transaction, Category.name)
+        .outerjoin(Category, Transaction.category_id == Category.id)
         .where(Transaction.owner_id == current_user.id)
         .order_by(Transaction.date.desc(), Transaction.created_at.desc())
     )
-    return result.scalars().all()
+    return [_to_transaction_out(transaction, category_name) for transaction, category_name in result.all()]
 
 
 @router.delete("/{transaction_id}", status_code=status.HTTP_204_NO_CONTENT)

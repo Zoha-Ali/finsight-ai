@@ -21,6 +21,7 @@ export interface Transaction {
   created_at: string
   owner_id: number
   category_id: number | null
+  category_name: string | null
 }
 
 export interface TransactionCreate {

@@ -53,6 +53,7 @@ class TransactionOut(BaseModel):
     created_at: datetime
     owner_id: int
     category_id: Optional[int] = None
+    category_name: Optional[str] = None
 
 
 class CategorizeRequest(BaseModel):

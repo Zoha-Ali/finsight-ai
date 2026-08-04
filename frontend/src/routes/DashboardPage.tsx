@@ -184,8 +184,8 @@ export default function DashboardPage() {
                       )}
                     </td>
                     <td className="px-5 py-3 text-ink-muted capitalize">{tx.source}</td>
-                    <td className="px-5 py-3 text-ink-muted">
-                      {tx.category_id !== null ? `#${tx.category_id}` : '—'}
+                    <td className="px-5 py-3 text-ink-muted capitalize">
+                      {tx.category_name ?? 'Uncategorized'}
                     </td>
                     <td className="px-5 py-3">
                       {tx.is_anomaly ? (
