@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..agents.categorization_agent import categorize_transaction
 from ..auth import get_current_user
 from ..database import get_db
-from ..models import Transaction, TransactionSource, User
+from ..models import Anomaly, Transaction, TransactionSource, User
 from ..schemas import TransactionCreate, TransactionOut
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -46,3 +46,27 @@ async def list_transactions(
         .order_by(Transaction.date.desc(), Transaction.created_at.desc())
     )
     return result.scalars().all()
+
+
+@router.delete("/{transaction_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_transaction(
+    transaction_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    transaction = (
+        await db.execute(select(Transaction).where(Transaction.id == transaction_id))
+    ).scalar_one_or_none()
+
+    if transaction is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
+
+    if transaction.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to delete this transaction",
+        )
+
+    await db.execute(delete(Anomaly).where(Anomaly.transaction_id == transaction_id))
+    await db.delete(transaction)
+    await db.commit()

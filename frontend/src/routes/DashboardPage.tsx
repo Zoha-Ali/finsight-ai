@@ -13,6 +13,7 @@ export default function DashboardPage() {
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(todayIso())
   const [submitting, setSubmitting] = useState(false)
+  const [deletingId, setDeletingId] = useState<number | null>(null)
 
   async function loadTransactions() {
     setLoading(true)
@@ -52,6 +53,22 @@ export default function DashboardPage() {
       setError(getErrorMessage(err, 'Could not add that transaction.'))
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function handleDelete(id: number) {
+    if (!window.confirm('Delete this transaction? This cannot be undone.')) return
+
+    setError(null)
+    setDeletingId(id)
+
+    try {
+      await api.delete(`/transactions/${id}`)
+      await loadTransactions()
+    } catch (err) {
+      setError(getErrorMessage(err, 'Could not delete that transaction.'))
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -147,6 +164,7 @@ export default function DashboardPage() {
                   <th className="px-5 py-3 font-medium">Source</th>
                   <th className="px-5 py-3 font-medium">Category</th>
                   <th className="px-5 py-3 font-medium">Status</th>
+                  <th className="px-5 py-3 font-medium"></th>
                 </tr>
               </thead>
               <tbody>
@@ -167,6 +185,16 @@ export default function DashboardPage() {
                       ) : (
                         <span className="text-ink-muted text-xs">Normal</span>
                       )}
+                    </td>
+                    <td className="px-5 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(tx.id)}
+                        disabled={deletingId === tx.id}
+                        className="text-xs font-medium text-ink-muted hover:text-danger disabled:opacity-60 transition-colors"
+                      >
+                        {deletingId === tx.id ? 'Deleting…' : 'Delete'}
+                      </button>
                     </td>
                   </tr>
                 ))}
