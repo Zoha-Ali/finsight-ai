@@ -90,18 +90,15 @@ export default function DashboardPage() {
     }
   }
 
-  async function enrichReceiptResult(result: ReceiptUploadResponse): Promise<EnrichedTransaction[]> {
+  function enrichReceiptResult(
+    result: ReceiptUploadResponse,
+    allTransactions: Transaction[],
+  ): EnrichedTransaction[] {
     // /receipts/upload only returns category + anomaly info per transaction,
-    // not merchant/amount/date - pull those from /transactions so the
-    // result is actually readable instead of a bare ID.
-    let byId = new Map<number, Transaction>()
-    try {
-      const response = await api.get<Transaction[]>('/transactions')
-      byId = new Map(response.data.map((t) => [t.id, t]))
-    } catch {
-      // non-fatal - the upload itself already succeeded, just fall back
-      // to showing what we have without merchant/amount/date.
-    }
+    // not merchant/amount/date - pull those from the already-fetched
+    // transaction list so the result is actually readable instead of a
+    // bare ID, without firing a second /transactions request for it.
+    const byId = new Map(allTransactions.map((t) => [t.id, t]))
 
     return result.transactions_created.map((c) => {
       const tx = byId.get(c.transaction_id)
@@ -131,12 +128,16 @@ export default function DashboardPage() {
 
     try {
       const response = await api.post<ReceiptUploadResponse>('/receipts/upload', formData)
-      const enriched = await enrichReceiptResult(response.data)
+      // Single refetch of /transactions - reused both to enrich the
+      // upload result (merchant/amount/date) and to refresh the table
+      // below, instead of fetching it twice.
+      setError(null)
+      const refreshed = await api.get<Transaction[]>('/transactions')
+      setTransactions(refreshed.data)
       setReceiptDocType(response.data.type)
-      setReceiptTransactions(enriched)
+      setReceiptTransactions(enrichReceiptResult(response.data, refreshed.data))
       setReceiptFile(null)
       if (receiptFileInputRef.current) receiptFileInputRef.current.value = ''
-      await loadTransactions()
     } catch (err) {
       setReceiptError(getErrorMessage(err, 'Could not process that file.'))
     } finally {

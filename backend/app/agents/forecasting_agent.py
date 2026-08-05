@@ -1,3 +1,4 @@
+import asyncio
 import calendar
 import os
 from datetime import date
@@ -114,8 +115,40 @@ async def generate_forecast(owner_id: int) -> dict:
 
     summary_rows = await get_monthly_summary(owner_id=owner_id, month=today.month, year=today.year)
 
+    # Each category's budget/historical-average lookup is an independent DB
+    # round trip with no dependency on any other category, so run them
+    # concurrently rather than one at a time - awaiting them sequentially
+    # just adds up per-call network latency for no benefit. Budgets are
+    # looked up first for every category at once; historical averages are
+    # then looked up, also all at once, only for the categories that came
+    # back with no budget.
+    async def _lookup_budget(category_id: int | None) -> dict | None:
+        if category_id is None:
+            return None
+        return await get_budget(owner_id=owner_id, category_id=category_id)
+
+    budgets = await asyncio.gather(*(_lookup_budget(row["category_id"]) for row in summary_rows))
+
+    async def _lookup_historical(category_id: int) -> dict | None:
+        return await get_historical_monthly_average(
+            owner_id=owner_id,
+            category_id=category_id,
+            exclude_month=today.month,
+            exclude_year=today.year,
+        )
+
+    need_historical = [
+        i
+        for i, (row, budget) in enumerate(zip(summary_rows, budgets))
+        if row["category_id"] is not None and budget is None
+    ]
+    historical_results = await asyncio.gather(
+        *(_lookup_historical(summary_rows[i]["category_id"]) for i in need_historical)
+    )
+    historical_by_index = dict(zip(need_historical, historical_results))
+
     forecasts = []
-    for row in summary_rows:
+    for i, row in enumerate(summary_rows):
         spent_so_far = row["total_spent"]
         projected_total = (spent_so_far / days_elapsed) * days_in_month
 
@@ -124,23 +157,17 @@ async def generate_forecast(owner_id: int) -> dict:
         comparison_type = "no_data"
         baseline = None
 
-        if row["category_id"] is not None:
-            budget = await get_budget(owner_id=owner_id, category_id=row["category_id"])
-            if budget is not None:
-                budget_limit = budget["monthly_limit"]
-                comparison_type = "budget"
-                baseline = budget_limit
-            else:
-                historical = await get_historical_monthly_average(
-                    owner_id=owner_id,
-                    category_id=row["category_id"],
-                    exclude_month=today.month,
-                    exclude_year=today.year,
-                )
-                if historical is not None and historical["months_counted"] >= MIN_HISTORY_MONTHS:
-                    historical_average = historical["average_monthly_spend"]
-                    comparison_type = "historical_average"
-                    baseline = historical_average
+        budget = budgets[i]
+        if budget is not None:
+            budget_limit = budget["monthly_limit"]
+            comparison_type = "budget"
+            baseline = budget_limit
+        else:
+            historical = historical_by_index.get(i)
+            if historical is not None and historical["months_counted"] >= MIN_HISTORY_MONTHS:
+                historical_average = historical["average_monthly_spend"]
+                comparison_type = "historical_average"
+                baseline = historical_average
 
         on_track_to_overspend = baseline is not None and projected_total > baseline
 
