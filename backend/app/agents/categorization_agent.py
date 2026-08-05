@@ -1,11 +1,13 @@
 import os
+from datetime import date
+from typing import Optional
 
 import httpx
 from dotenv import load_dotenv
 from sqlalchemy import select
 
 from ..database import AsyncSessionLocal
-from ..mcp_server import get_transactions
+from ..mcp_server import get_transactions, get_weekly_average
 from ..models import Anomaly, Category, Transaction
 from .tracing import save_trace
 
@@ -61,15 +63,63 @@ async def _predict_category(merchant: str, amount: float) -> str:
     return predicted if predicted in CATEGORIES else "other"
 
 
+async def _get_anomaly_baseline(
+    owner_id: int, category_id: int, transaction_date: date, exclude_transaction_id: int
+) -> tuple[Optional[float], str]:
+    """Return (average, description) to compare a transaction's amount
+    against for anomaly detection.
+
+    Prefers the user's average weekly spending in this category (a
+    transaction that's a large multiple of a typical week's total is a
+    more meaningful signal than comparing against individual past
+    transaction amounts). Falls back to the average of the user's recent
+    same-category transactions - the previous approach - when there's no
+    distinct prior week of spending yet (e.g. a brand new category),
+    so a new category still gets some anomaly protection instead of none.
+    Returns (None, "") if there's no baseline data of either kind.
+    """
+    iso_year, iso_week, _ = transaction_date.isocalendar()
+    weekly = await get_weekly_average(
+        owner_id=owner_id,
+        category_id=category_id,
+        exclude_week=iso_week,
+        exclude_isoyear=iso_year,
+    )
+    if weekly is not None and weekly["average_weekly_spend"] > 0:
+        weeks = weekly["weeks_counted"]
+        description = (
+            f"${weekly['average_weekly_spend']:.2f}/week average spend in this "
+            f"category across {weeks} prior week{'s' if weeks != 1 else ''}"
+        )
+        return weekly["average_weekly_spend"], description
+
+    recent_transactions = await get_transactions(owner_id=owner_id, limit=100)
+    same_category_amounts = [
+        t["amount"]
+        for t in recent_transactions
+        if t["category_id"] == category_id and t["id"] != exclude_transaction_id
+    ]
+    if not same_category_amounts:
+        return None, ""
+
+    average = sum(same_category_amounts) / len(same_category_amounts)
+    description = (
+        f"${average:.2f} average of the user's last {len(same_category_amounts)} "
+        "transactions in this category"
+    )
+    return average, description
+
+
 async def categorize_transaction(transaction_id: int, owner_id: int) -> dict:
     """Categorize a transaction and flag it as an anomaly if it stands out.
 
-    Predicts a category with claude-haiku-4-5, compares the transaction's
-    amount against the user's average spend in that category (computed in
-    Python from MCP's get_transactions, not by the LLM), and flags it as
-    an anomaly if it's more than 2.5x that average. Updates the
-    transaction's category_id directly and, if flagged, writes an Anomaly
-    row with the reason.
+    Predicts a category with claude-haiku-4-5, then compares the
+    transaction's amount (in Python, not by the LLM) against the user's
+    average weekly spend in that category - falling back to the average
+    of recent same-category transactions if there's no distinct prior
+    week of history yet - and flags it as an anomaly if it's more than
+    2.5x that baseline. Updates the transaction's category_id directly
+    and, if flagged, writes an Anomaly row with the reason.
     """
     async with AsyncSessionLocal() as session:
         result = await session.execute(
@@ -93,25 +143,18 @@ async def categorize_transaction(transaction_id: int, owner_id: int) -> dict:
             session.add(category)
             await session.flush()
 
-        recent_transactions = await get_transactions(owner_id=owner_id, limit=100)
-        same_category_amounts = [
-            t["amount"]
-            for t in recent_transactions
-            if t["category_id"] == category.id and t["id"] != transaction.id
-        ]
+        average, baseline_description = await _get_anomaly_baseline(
+            owner_id, category.id, transaction.date, transaction.id
+        )
 
         is_anomaly = False
         reason = None
-        if same_category_amounts:
-            average = sum(same_category_amounts) / len(same_category_amounts)
-            if average > 0 and transaction.amount > ANOMALY_MULTIPLIER * average:
-                is_anomaly = True
-                reason = (
-                    f"Amount ${transaction.amount:.2f} is "
-                    f"{transaction.amount / average:.1f}x the average "
-                    f"(${average:.2f}) of the user's last "
-                    f"{len(same_category_amounts)} '{predicted_category}' transactions."
-                )
+        if average is not None and average > 0 and transaction.amount > ANOMALY_MULTIPLIER * average:
+            is_anomaly = True
+            reason = (
+                f"Amount ${transaction.amount:.2f} is "
+                f"{transaction.amount / average:.1f}x the {baseline_description}."
+            )
 
         transaction.category_id = category.id
         transaction.is_anomaly = is_anomaly

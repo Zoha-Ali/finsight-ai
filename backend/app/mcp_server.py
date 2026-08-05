@@ -175,6 +175,49 @@ async def get_historical_monthly_average(
 
 
 @mcp.tool()
+async def get_weekly_average(
+    owner_id: int,
+    category_id: int,
+    exclude_week: int,
+    exclude_isoyear: int,
+) -> Optional[dict]:
+    """Return a user's average weekly spending in a category from past
+    weeks (ISO week numbering), excluding one specific week/isoyear -
+    typically the week containing the transaction currently being
+    evaluated, so it doesn't contaminate its own baseline.
+
+    Returns None if there's no prior spending in that category in any
+    other week. Use this as the baseline for anomaly detection: a single
+    transaction that's a large multiple of a typical week's total spend
+    in that category is a more meaningful anomaly signal than comparing
+    against an unweighted average of individual recent transactions.
+    """
+    async with AsyncSessionLocal() as session:
+        week_expr = extract("week", Transaction.date)
+        isoyear_expr = extract("isoyear", Transaction.date)
+
+        weekly_totals = (
+            select(func.sum(Transaction.amount).label("weekly_total"))
+            .where(
+                Transaction.owner_id == owner_id,
+                Transaction.category_id == category_id,
+                not_(and_(week_expr == exclude_week, isoyear_expr == exclude_isoyear)),
+            )
+            .group_by(isoyear_expr, week_expr)
+        ).subquery()
+
+        result = await session.execute(
+            select(func.avg(weekly_totals.c.weekly_total), func.count()).select_from(weekly_totals)
+        )
+        average, weeks_counted = result.one()
+
+        if average is None or weeks_counted == 0:
+            return None
+
+        return {"average_weekly_spend": float(average), "weeks_counted": weeks_counted}
+
+
+@mcp.tool()
 async def get_anomalies(owner_id: int, limit: int = 20) -> list[dict]:
     """Return a user's most recently flagged anomalies, newest first.
 
