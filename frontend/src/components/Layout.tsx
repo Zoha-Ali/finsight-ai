@@ -26,9 +26,6 @@ export default function Layout() {
             <NavLink to="/forecast" className={linkClass}>
               Forecast
             </NavLink>
-            <NavLink to="/receipts" className={linkClass}>
-              Receipts
-            </NavLink>
             <NavLink to="/chat" className={linkClass}>
               Chat
             </NavLink>
