@@ -110,14 +110,6 @@ export default function ChatPage() {
             </div>
           </div>
         ))}
-
-        {loading && (
-          <div className="flex justify-start">
-            <div className="bg-surface-card border border-border text-sm text-ink-muted rounded-lg rounded-bl-sm px-4 py-2.5">
-              Thinking…
-            </div>
-          </div>
-        )}
       </div>
 
       {error && (
@@ -132,7 +124,8 @@ export default function ChatPage() {
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           placeholder="Ask a question about your spending…"
-          className="flex-1 rounded-md border border-border bg-surface-card px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
+          disabled={loading}
+          className="flex-1 rounded-md border border-border bg-surface-card px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary disabled:opacity-60"
         />
         <button
           type="submit"
@@ -142,6 +135,7 @@ export default function ChatPage() {
           Send
         </button>
       </form>
+      {loading && <p className="text-sm text-ink-muted">Thinking…</p>}
     </div>
   )
 }
