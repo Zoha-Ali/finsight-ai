@@ -1,11 +1,17 @@
 import { useState, type FormEvent } from 'react'
 import { api, getErrorMessage } from '@/lib/api'
-import type { QAResponse } from '@/types'
+import type { CompareModelsResponse, ModelCompareResult, QAResponse } from '@/types'
 
 interface ChatEntry {
   question: string
-  answer: string
+  answer: string | null
   table: Record<string, unknown>[] | null
+  compare: CompareModelsResponse | null
+}
+
+const MODEL_LABELS: Record<string, string> = {
+  'claude-haiku-4-5': 'Claude Haiku 4.5',
+  'claude-sonnet-5': 'Claude Sonnet 5',
 }
 
 // POST /qa is routed through the supervisor, which can dispatch to the qa,
@@ -25,11 +31,53 @@ function extractAnswer(data: QAResponse): string {
   return "Done, but I'm not sure how to summarize that."
 }
 
+function ModelAnswerCard({ result }: { result: ModelCompareResult }) {
+  return (
+    <div className="bg-surface-card border border-border rounded-lg px-4 py-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-primary">{MODEL_LABELS[result.model] ?? result.model}</span>
+        <span className="text-xs text-ink-muted tabular-figures">{result.elapsed_seconds.toFixed(2)}s</span>
+      </div>
+      <p className="text-sm text-ink">{result.answer}</p>
+      {result.table && result.table.length > 0 && (
+        <div className="overflow-x-auto border border-border rounded-md">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-surface text-left text-ink-muted">
+                {Object.keys(result.table[0]).map((key) => (
+                  <th key={key} className="px-3 py-2 font-medium capitalize">
+                    {key.replace(/_/g, ' ')}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {result.table.map((row, rowIndex) => (
+                <tr key={rowIndex} className="border-t border-border">
+                  {Object.keys(result.table![0]).map((key) => (
+                    <td key={key} className="px-3 py-2 tabular-figures text-ink">
+                      {String(row[key] ?? '')}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {result.tools_used.length > 0 && (
+        <p className="text-xs italic text-ink-muted/70">tools used: {result.tools_used.join(', ')}</p>
+      )}
+    </div>
+  )
+}
+
 export default function ChatPage() {
   const [question, setQuestion] = useState('')
   const [history, setHistory] = useState<ChatEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [compareMode, setCompareMode] = useState(false)
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -41,11 +89,16 @@ export default function ChatPage() {
     setQuestion('')
 
     try {
-      const response = await api.post<QAResponse>('/qa', { question: askedQuestion })
-      setHistory((prev) => [
-        ...prev,
-        { question: askedQuestion, answer: extractAnswer(response.data), table: response.data.table },
-      ])
+      if (compareMode) {
+        const response = await api.post<CompareModelsResponse>('/qa/compare', { question: askedQuestion })
+        setHistory((prev) => [...prev, { question: askedQuestion, answer: null, table: null, compare: response.data }])
+      } else {
+        const response = await api.post<QAResponse>('/qa', { question: askedQuestion })
+        setHistory((prev) => [
+          ...prev,
+          { question: askedQuestion, answer: extractAnswer(response.data), table: response.data.table, compare: null },
+        ])
+      }
     } catch (err) {
       setError(getErrorMessage(err, 'Could not get an answer right now.'))
     } finally {
@@ -77,37 +130,44 @@ export default function ChatPage() {
                 {entry.question}
               </div>
             </div>
-            <div className="flex justify-start">
-              <div className="bg-surface-card border border-border text-sm text-ink rounded-lg rounded-bl-sm px-4 py-2.5 max-w-2xl space-y-3">
-                <p>{entry.answer}</p>
-                {entry.table && entry.table.length > 0 && (
-                  <div className="overflow-x-auto border border-border rounded-md">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="bg-surface text-left text-ink-muted">
-                          {Object.keys(entry.table[0]).map((key) => (
-                            <th key={key} className="px-3 py-2 font-medium capitalize">
-                              {key.replace(/_/g, ' ')}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {entry.table.map((row, rowIndex) => (
-                          <tr key={rowIndex} className="border-t border-border">
-                            {Object.keys(entry.table![0]).map((key) => (
-                              <td key={key} className="px-3 py-2 tabular-figures text-ink">
-                                {String(row[key] ?? '')}
-                              </td>
+            {entry.compare ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <ModelAnswerCard result={entry.compare.haiku} />
+                <ModelAnswerCard result={entry.compare.sonnet} />
+              </div>
+            ) : (
+              <div className="flex justify-start">
+                <div className="bg-surface-card border border-border text-sm text-ink rounded-lg rounded-bl-sm px-4 py-2.5 max-w-2xl space-y-3">
+                  <p>{entry.answer}</p>
+                  {entry.table && entry.table.length > 0 && (
+                    <div className="overflow-x-auto border border-border rounded-md">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-surface text-left text-ink-muted">
+                            {Object.keys(entry.table[0]).map((key) => (
+                              <th key={key} className="px-3 py-2 font-medium capitalize">
+                                {key.replace(/_/g, ' ')}
+                              </th>
                             ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                        </thead>
+                        <tbody>
+                          {entry.table.map((row, rowIndex) => (
+                            <tr key={rowIndex} className="border-t border-border">
+                              {Object.keys(entry.table![0]).map((key) => (
+                                <td key={key} className="px-3 py-2 tabular-figures text-ink">
+                                  {String(row[key] ?? '')}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         ))}
       </div>
@@ -117,6 +177,17 @@ export default function ChatPage() {
           {error}
         </p>
       )}
+
+      <label className="flex items-center gap-2 text-sm text-ink-muted cursor-pointer w-fit">
+        <input
+          type="checkbox"
+          checked={compareMode}
+          onChange={(e) => setCompareMode(e.target.checked)}
+          disabled={loading}
+          className="rounded border-border text-primary focus:ring-primary/30"
+        />
+        Compare models (claude-haiku-4-5 vs claude-sonnet-5)
+      </label>
 
       <form onSubmit={handleSubmit} className="flex gap-2">
         <input
@@ -135,7 +206,11 @@ export default function ChatPage() {
           Send
         </button>
       </form>
-      {loading && <p className="text-sm text-ink-muted">Thinking…</p>}
+      {loading && (
+        <p className="text-sm text-ink-muted">
+          {compareMode ? 'Asking both models…' : 'Thinking…'}
+        </p>
+      )}
     </div>
   )
 }

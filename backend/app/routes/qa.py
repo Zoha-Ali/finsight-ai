@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from ..agents.qa_agent import compare_models
 from ..agents.supervisor_agent import route_request
 from ..auth import get_current_user
 from ..models import User
-from ..schemas import QARequest, QAResponse
+from ..schemas import CompareModelsResponse, QARequest, QAResponse
 
 router = APIRouter(prefix="/qa", tags=["qa"])
 
@@ -25,3 +26,12 @@ async def ask_question(
         trace=result["trace"],
         table=result.get("table"),
     )
+
+
+@router.post("/compare", response_model=CompareModelsResponse)
+async def compare_question(
+    payload: QARequest,
+    current_user: User = Depends(get_current_user),
+) -> CompareModelsResponse:
+    result = await compare_models(payload.question, current_user.id)
+    return CompareModelsResponse(question=payload.question, **result)

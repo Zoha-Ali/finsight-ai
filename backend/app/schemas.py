@@ -103,6 +103,20 @@ class QAResponse(BaseModel):
     table: Optional[list[dict]] = None
 
 
+class ModelCompareResult(BaseModel):
+    model: str
+    answer: str
+    table: Optional[list[dict]] = None
+    tools_used: list[str]
+    elapsed_seconds: float
+
+
+class CompareModelsResponse(BaseModel):
+    question: str
+    haiku: ModelCompareResult
+    sonnet: ModelCompareResult
+
+
 class CategoryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

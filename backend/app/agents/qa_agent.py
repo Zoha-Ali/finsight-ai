@@ -1,5 +1,7 @@
+import asyncio
 import json
 import os
+import time
 from datetime import date
 
 import httpx
@@ -13,6 +15,11 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
 MODEL = "claude-haiku-4-5"
+
+# Models available for the side-by-side comparison feature - both run the
+# identical tool-use loop against the same real data, so any difference in
+# the answers reflects the model itself, not the pipeline.
+COMPARISON_MODELS = {"haiku": "claude-haiku-4-5", "sonnet": "claude-sonnet-5"}
 
 MAX_TOOL_CALLS = 4
 
@@ -157,12 +164,12 @@ def _parse_final_answer(text: str) -> tuple[str, list[dict] | None]:
     return str(parsed["answer"]), table
 
 
-async def _call_model(messages: list[dict], allow_tools: bool) -> dict:
+async def _call_model(messages: list[dict], allow_tools: bool, model: str = MODEL) -> dict:
     if not ANTHROPIC_API_KEY:
         raise RuntimeError("ANTHROPIC_API_KEY is not set in the environment")
 
     payload = {
-        "model": MODEL,
+        "model": model,
         "max_tokens": 1024,
         "system": _system_prompt(),
         "messages": messages,
@@ -191,7 +198,7 @@ async def _run_tool(name: str, tool_input: dict, owner_id: int) -> dict:
     return await tool_fn(owner_id=owner_id, **tool_input)
 
 
-async def answer_question(question: str, owner_id: int) -> dict:
+async def answer_question(question: str, owner_id: int, model: str = MODEL) -> dict:
     """Answer a natural-language question about a user's finances.
 
     Runs a ReAct-style loop: the model picks from the MCP tools
@@ -202,13 +209,15 @@ async def answer_question(question: str, owner_id: int) -> dict:
     gives a final answer or the tool-call cap is reached. The final answer
     includes an optional "table" - populated with rows when the data is
     naturally tabular (e.g. a transaction list or category breakdown),
-    left null for single-value answers.
+    left null for single-value answers. `model` defaults to this module's
+    standard model but can be overridden (see compare_models) to run the
+    identical loop against a different one.
     """
     messages: list[dict] = [{"role": "user", "content": question}]
     tools_used: list[str] = []
 
     while len(tools_used) < MAX_TOOL_CALLS:
-        response = await _call_model(messages, allow_tools=True)
+        response = await _call_model(messages, allow_tools=True, model=model)
         content = response["content"]
         messages.append({"role": "assistant", "content": content})
 
@@ -254,6 +263,28 @@ async def answer_question(question: str, owner_id: int) -> dict:
 
     # Tool-call cap reached and the model still wanted another tool call;
     # force a final answer from whatever's been gathered so far.
-    final_response = await _call_model(messages, allow_tools=False)
+    final_response = await _call_model(messages, allow_tools=False, model=model)
     answer, table = _parse_final_answer(_extract_text(final_response["content"]))
     return {"answer": answer, "tools_used": tools_used, "table": table}
+
+
+async def _timed_answer(question: str, owner_id: int, model: str) -> dict:
+    start = time.perf_counter()
+    result = await answer_question(question, owner_id, model=model)
+    elapsed = time.perf_counter() - start
+    return {**result, "model": model, "elapsed_seconds": round(elapsed, 2)}
+
+
+async def compare_models(question: str, owner_id: int) -> dict:
+    """Answer the same question with claude-haiku-4-5 and claude-sonnet-5.
+
+    Runs the identical tool-use loop from answer_question() against each
+    model concurrently, both scoped to the same owner_id and hitting the
+    same real data - so any difference between the two answers reflects
+    the model itself, not the pipeline or the data available to it.
+    """
+    haiku_result, sonnet_result = await asyncio.gather(
+        _timed_answer(question, owner_id, COMPARISON_MODELS["haiku"]),
+        _timed_answer(question, owner_id, COMPARISON_MODELS["sonnet"]),
+    )
+    return {"haiku": haiku_result, "sonnet": sonnet_result}

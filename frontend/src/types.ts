@@ -39,6 +39,20 @@ export interface QAResponse {
   table: Record<string, unknown>[] | null
 }
 
+export interface ModelCompareResult {
+  model: string
+  answer: string
+  table: Record<string, unknown>[] | null
+  tools_used: string[]
+  elapsed_seconds: number
+}
+
+export interface CompareModelsResponse {
+  question: string
+  haiku: ModelCompareResult
+  sonnet: ModelCompareResult
+}
+
 export type ForecastComparisonType = 'budget' | 'historical_average' | 'no_data'
 
 export interface ForecastEntry {
