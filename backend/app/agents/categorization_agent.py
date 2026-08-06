@@ -24,18 +24,52 @@ CATEGORIES = ["food", "transport", "shopping", "entertainment", "bills", "health
 ANOMALY_MULTIPLIER = 2.5
 
 
-async def _predict_category(merchant: str, amount: float, model: str = MODEL) -> str:
-    """Ask a model to pick a category, over a raw HTTP call.
+async def _call_prediction_model(messages: list[dict], model: str) -> str:
+    """Send a plain (non-tool-use) chat message and return the raw text.
 
     This bypasses the anthropic SDK on purpose: the SDK's jiter dependency
     has previously been blocked by Windows Application Control on this
     project's dev machines, so agent code talks to the Messages API
     directly via httpx instead of depending on the SDK being importable.
-    `model` defaults to this module's standard Anthropic model but is
-    routed to Groq instead when it's the Groq model (see
+    Routed to Groq instead when `model` is the Groq model (see
     supervisor_agent.py's simple/complex classification, which sends
-    "simple" categorization requests here) - the prompt and category
-    parsing are identical either way, only the HTTP call differs.
+    "simple" categorization requests here). Since this call never uses
+    tools, a plain role/content message list works unchanged against
+    either provider's API, so the two branches only differ in which HTTP
+    call they make.
+    """
+    if is_groq_model(model):
+        data = await call_groq(messages, model=model, max_tokens=16)
+        return data["choices"][0]["message"]["content"].strip()
+
+    if not ANTHROPIC_API_KEY:
+        raise RuntimeError("ANTHROPIC_API_KEY is not set in the environment")
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            ANTHROPIC_API_URL,
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": ANTHROPIC_VERSION,
+                "content-type": "application/json",
+            },
+            json={
+                "model": model,
+                "max_tokens": 16,
+                "messages": messages,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+
+    return "".join(block["text"] for block in data["content"] if block.get("type") == "text").strip()
+
+
+async def _predict_category(merchant: str, amount: float, model: str = MODEL) -> str:
+    """Ask a model to pick a category, retrying once if it doesn't return
+    one of the allowed category names (same retry-once-then-fall-back
+    pattern used for JSON extraction in receipt_agent.py, adapted for a
+    plain-text single-token response instead of a JSON object).
     """
     prompt = (
         "Classify this transaction into exactly one category from this "
@@ -44,34 +78,29 @@ async def _predict_category(merchant: str, amount: float, model: str = MODEL) ->
         f"Amount: ${amount:.2f}\n\n"
         "Respond with only the category name, lowercase, and nothing else."
     )
+    messages: list[dict] = [{"role": "user", "content": prompt}]
 
-    if is_groq_model(model):
-        data = await call_groq([{"role": "user", "content": prompt}], model=model, max_tokens=16)
-        predicted = data["choices"][0]["message"]["content"].strip().lower()
-    else:
-        if not ANTHROPIC_API_KEY:
-            raise RuntimeError("ANTHROPIC_API_KEY is not set in the environment")
+    for attempt in range(2):
+        raw_text = await _call_prediction_model(messages, model)
+        predicted = raw_text.strip().lower()
+        if predicted in CATEGORIES:
+            return predicted
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                ANTHROPIC_API_URL,
-                headers={
-                    "x-api-key": ANTHROPIC_API_KEY,
-                    "anthropic-version": ANTHROPIC_VERSION,
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "max_tokens": 16,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
+        if attempt == 0:
+            messages.append({"role": "assistant", "content": raw_text})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f'"{raw_text}" is not one of the allowed categories. Respond again with '
+                        f"ONLY one of these exact words, lowercase, nothing else: {', '.join(CATEGORIES)}."
+                    ),
+                }
             )
-            response.raise_for_status()
-            data = response.json()
 
-        predicted = data["content"][0]["text"].strip().lower()
-
-    return predicted if predicted in CATEGORIES else "other"
+    # Still not a recognized category after a retry - fall back rather
+    # than crash the whole transaction-creation flow over a formatting slip.
+    return "other"
 
 
 async def _get_anomaly_baseline(

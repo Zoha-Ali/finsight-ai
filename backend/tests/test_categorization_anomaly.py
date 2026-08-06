@@ -13,6 +13,43 @@ def _unique(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:8]}"
 
 
+# --- Part 0: _predict_category's retry-on-invalid-output fallback --------
+# Deliberately simulates a malformed (not-a-real-category) model response
+# to confirm the retry-once-then-fall-back pattern degrades gracefully
+# instead of crashing - mirrors receipt_agent.py's JSON retry pattern,
+# adapted for a plain-text single-token response.
+
+
+async def test_predict_category_retries_once_and_uses_the_corrected_answer(monkeypatch):
+    calls: list[list[dict]] = []
+
+    async def fake_call(messages, model):
+        calls.append([dict(m) for m in messages])
+        if len(calls) == 1:
+            return "I cannot classify this transaction"  # not a real category
+        return "food"  # valid on retry
+
+    monkeypatch.setattr(categorization_agent, "_call_prediction_model", fake_call)
+
+    result = await categorization_agent._predict_category("Trader Joe's", 42.0)
+
+    assert result == "food"
+    assert len(calls) == 2
+    # the retry call must include corrective feedback, not just repeat the prompt
+    assert "not one of the allowed categories" in calls[1][-1]["content"]
+
+
+async def test_predict_category_falls_back_to_other_when_retry_also_fails(monkeypatch):
+    async def fake_call(messages, model):
+        return "definitely not a category"  # invalid every time
+
+    monkeypatch.setattr(categorization_agent, "_call_prediction_model", fake_call)
+
+    result = await categorization_agent._predict_category("Weird Merchant", 10.0)
+
+    assert result == "other"  # graceful fallback, not a crash
+
+
 # --- Part 1: _get_anomaly_baseline in isolation (no DB, no LLM) ------------
 
 

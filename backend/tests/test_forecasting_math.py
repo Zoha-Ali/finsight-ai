@@ -1,6 +1,7 @@
 from datetime import date as real_date
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 from app.agents import forecasting_agent
@@ -259,3 +260,86 @@ def test_forecast_line_formats_a_no_data_comparison():
         }
     )
     assert "no budget set and not enough history yet" in line
+
+
+# --- _summarize API-failure fallback ---------------------------------------
+# Deliberately simulates the summary LLM call failing (network error) to
+# confirm generate_forecast() still returns the already-computed numbers
+# with a generic fallback summary, instead of the whole forecast crashing.
+
+
+async def test_generate_forecast_falls_back_to_a_generic_summary_when_summarize_raises(monkeypatch):
+    _set_today(monkeypatch, 2026, 3, 5)  # day 5 of a 31-day month
+
+    monkeypatch.setattr(
+        forecasting_agent,
+        "get_monthly_summary",
+        AsyncMock(return_value=[{"category_id": 1, "category_name": "food", "total_spent": 200.0}]),
+    )
+    monkeypatch.setattr(
+        forecasting_agent, "get_budget", AsyncMock(return_value={"monthly_limit": 100.0, "category_id": 1})
+    )
+    monkeypatch.setattr(forecasting_agent, "get_historical_monthly_average", AsyncMock(return_value=None))
+
+    async def failing_summarize(forecasts):
+        raise httpx.ConnectError("network is down")
+
+    monkeypatch.setattr(forecasting_agent, "_summarize", failing_summarize)
+
+    result = await forecasting_agent.generate_forecast(owner_id=1)
+
+    # the pre-computed numbers must survive the summary failure untouched
+    forecast = result["forecasts"][0]
+    assert forecast["projected_total"] == pytest.approx((200.0 / 5) * 31)
+    assert forecast["on_track_to_overspend"] is True
+
+    # the summary falls back to a generic, non-crashing sentence that still
+    # names the at-risk category rather than a bare error
+    assert "couldn't be generated" in result["summary"]
+    assert "food" in result["summary"]
+
+
+async def test_generate_forecast_fallback_summary_mentions_no_risk_when_everything_is_on_track(monkeypatch):
+    _set_today(monkeypatch, 2026, 3, 5)
+
+    monkeypatch.setattr(
+        forecasting_agent,
+        "get_monthly_summary",
+        AsyncMock(return_value=[{"category_id": 1, "category_name": "food", "total_spent": 10.0}]),
+    )
+    monkeypatch.setattr(
+        forecasting_agent, "get_budget", AsyncMock(return_value={"monthly_limit": 1000.0, "category_id": 1})
+    )
+    monkeypatch.setattr(forecasting_agent, "get_historical_monthly_average", AsyncMock(return_value=None))
+
+    async def failing_summarize(forecasts):
+        raise httpx.ReadTimeout("timed out")
+
+    monkeypatch.setattr(forecasting_agent, "_summarize", failing_summarize)
+
+    result = await forecasting_agent.generate_forecast(owner_id=1)
+
+    assert result["forecasts"][0]["on_track_to_overspend"] is False
+    assert "on track" in result["summary"]
+    assert "couldn't be generated" in result["summary"]
+
+
+async def test_generate_forecast_fallback_also_triggers_on_missing_api_key(monkeypatch):
+    _set_today(monkeypatch, 2026, 3, 5)
+
+    monkeypatch.setattr(
+        forecasting_agent,
+        "get_monthly_summary",
+        AsyncMock(return_value=[{"category_id": 1, "category_name": "food", "total_spent": 10.0}]),
+    )
+    monkeypatch.setattr(forecasting_agent, "get_budget", AsyncMock(return_value=None))
+    monkeypatch.setattr(forecasting_agent, "get_historical_monthly_average", AsyncMock(return_value=None))
+
+    async def failing_summarize(forecasts):
+        raise RuntimeError("ANTHROPIC_API_KEY is not set in the environment")
+
+    monkeypatch.setattr(forecasting_agent, "_summarize", failing_summarize)
+
+    # must not raise - the whole point is that this degrades gracefully
+    result = await forecasting_agent.generate_forecast(owner_id=1)
+    assert "couldn't be generated" in result["summary"]

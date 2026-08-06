@@ -51,6 +51,31 @@ def _forecast_line(forecast: dict) -> str:
     return line
 
 
+def _fallback_summary(forecasts: list[dict]) -> str:
+    """A deterministic, no-LLM-required summary used when _summarize's API
+    call fails (network error, rate limit, missing key) - the numbers in
+    `forecasts` were already fully computed in Python before the LLM call,
+    so a summary being unavailable shouldn't take the whole forecast down
+    with it. Not as polished as the real summary, but still says whether
+    anything needs attention rather than a bare "something went wrong."
+    """
+    over_budget = [f["category"] for f in forecasts if f["on_track_to_overspend"]]
+    if not over_budget:
+        return (
+            "Your spending forecast has been calculated below - you're on track in every "
+            "category with a baseline to compare against. (A written summary couldn't be "
+            "generated right now.)"
+        )
+
+    categories = ", ".join(over_budget)
+    return (
+        f"Your spending forecast has been calculated below - {len(over_budget)} "
+        f"categor{'y is' if len(over_budget) == 1 else 'ies are'} projected to go over "
+        f"budget or typical spending: {categories}. (A written summary couldn't be "
+        "generated right now.)"
+    )
+
+
 async def _summarize(forecasts: list[dict]) -> str:
     """Ask claude-haiku-4-5 to phrase the pre-computed forecast as prose.
 
@@ -184,7 +209,16 @@ async def generate_forecast(owner_id: int) -> dict:
             }
         )
 
-    summary = await _summarize(forecasts) if forecasts else "No spending recorded yet this month."
+    if not forecasts:
+        summary = "No spending recorded yet this month."
+    else:
+        try:
+            summary = await _summarize(forecasts)
+        except (httpx.HTTPError, RuntimeError):
+            # The numbers above are already fully computed - don't let a
+            # network error or rate limit on the summary call take the
+            # whole forecast down with it.
+            summary = _fallback_summary(forecasts)
 
     result = {"forecasts": forecasts, "summary": summary}
 

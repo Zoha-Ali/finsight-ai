@@ -160,26 +160,64 @@ def _strip_code_fence(text: str) -> str:
     return text.strip()
 
 
-def _parse_final_answer(text: str) -> tuple[str, list[dict] | None]:
+def _parse_final_answer(text: str) -> tuple[str, list[dict] | None, bool]:
     """Parse the model's final response as {"answer": str, "table": ...}.
 
-    Falls back to treating the whole response as plain-text prose with no
-    table if it isn't valid JSON (or doesn't have the expected shape),
-    rather than crashing on a formatting slip.
+    Returns (answer, table, was_valid) - was_valid is False whenever the
+    text isn't valid JSON matching the schema, in which case the whole
+    response is returned verbatim as the answer with table=None, so a
+    formatting slip degrades to plain-text prose instead of crashing.
+    Callers that want the retry-once-on-malformed-output pattern (see
+    _finalize_answer) use was_valid to decide whether to ask the model to
+    reformat before falling back to this same graceful degradation.
     """
     try:
         parsed = json.loads(_strip_code_fence(text))
     except json.JSONDecodeError:
-        return text, None
+        return text, None, False
 
     if not isinstance(parsed, dict) or "answer" not in parsed:
-        return text, None
+        return text, None, False
 
     table = parsed.get("table")
     if not isinstance(table, list):
         table = None
 
-    return str(parsed["answer"]), table
+    return str(parsed["answer"]), table, True
+
+
+async def _finalize_answer(messages: list[dict], raw_text: str, call_fn) -> tuple[str, list[dict] | None]:
+    """Parse a model's final answer, retrying once via call_fn if it isn't
+    valid JSON matching the expected schema - the same retry-once-then-
+    fall-back pattern receipt_agent.py uses for its JSON extraction.
+
+    `messages` must already end with the assistant's original final-answer
+    turn (appended by the caller, in whichever shape that provider uses -
+    Anthropic's content-blocks list vs Groq's message dict) - this only
+    appends the corrective user message before retrying, rather than
+    re-appending the assistant's turn a second time (which would produce
+    two consecutive assistant turns, invalid for a strict user/assistant
+    conversation). `call_fn` takes the messages list and returns the
+    retried response's raw text; it's provider-specific but the parsing
+    and fallback behavior here is shared.
+    """
+    answer, table, was_valid = _parse_final_answer(raw_text)
+    if was_valid:
+        return answer, table
+
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                "That was not valid JSON matching the required schema. Respond again with ONLY "
+                'the raw JSON object - no markdown, no commentary: {"answer": string, "table": '
+                "array of objects, or null}."
+            ),
+        }
+    )
+    retry_text = await call_fn(messages)
+    answer, table, _ = _parse_final_answer(retry_text)
+    return answer, table
 
 
 async def _call_model(messages: list[dict], allow_tools: bool, model: str = MODEL) -> dict:
@@ -240,6 +278,10 @@ async def answer_question(question: str, owner_id: int, model: str = MODEL) -> d
 
 
 async def _answer_question_anthropic(question: str, owner_id: int, model: str) -> dict:
+    async def call_fn(msgs: list[dict]) -> str:
+        response = await _call_model(msgs, allow_tools=False, model=model)
+        return _extract_text(response["content"])
+
     messages: list[dict] = [{"role": "user", "content": question}]
     tools_used: list[str] = []
 
@@ -249,7 +291,7 @@ async def _answer_question_anthropic(question: str, owner_id: int, model: str) -
         messages.append({"role": "assistant", "content": content})
 
         if response.get("stop_reason") != "tool_use":
-            answer, table = _parse_final_answer(_extract_text(content))
+            answer, table = await _finalize_answer(messages, _extract_text(content), call_fn)
             return {"answer": answer, "tools_used": tools_used, "table": table}
 
         tool_results = []
@@ -291,7 +333,9 @@ async def _answer_question_anthropic(question: str, owner_id: int, model: str) -
     # Tool-call cap reached and the model still wanted another tool call;
     # force a final answer from whatever's been gathered so far.
     final_response = await _call_model(messages, allow_tools=False, model=model)
-    answer, table = _parse_final_answer(_extract_text(final_response["content"]))
+    final_content = final_response["content"]
+    messages.append({"role": "assistant", "content": final_content})
+    answer, table = await _finalize_answer(messages, _extract_text(final_content), call_fn)
     return {"answer": answer, "tools_used": tools_used, "table": table}
 
 
@@ -303,6 +347,10 @@ async def _answer_question_groq(question: str, owner_id: int, model: str) -> dic
     messages instead of a tool_result content block, but the underlying
     tools, prompt, and final-answer parsing are identical.
     """
+    async def call_fn(msgs: list[dict]) -> str:
+        response = await call_groq(msgs, model=model)
+        return response["choices"][0]["message"].get("content") or ""
+
     messages: list[dict] = [
         {"role": "system", "content": _system_prompt()},
         {"role": "user", "content": question},
@@ -310,13 +358,27 @@ async def _answer_question_groq(question: str, owner_id: int, model: str) -> dic
     tools_used: list[str] = []
 
     while len(tools_used) < MAX_TOOL_CALLS:
-        response = await call_groq(messages, model=model, tools=GROQ_TOOLS)
+        try:
+            response = await call_groq(messages, model=model, tools=GROQ_TOOLS)
+        except httpx.HTTPStatusError:
+            # Llama on Groq occasionally emits a malformed function-call
+            # (e.g. an XML-ish <function=...> tag instead of a proper
+            # tool_calls entry), which Groq's own API rejects outright
+            # with a 400 "tool_use_failed" before we ever see a response
+            # to parse. Rather than crash the whole request over a single
+            # bad generation, give up on tool use and fall through to the
+            # same "force a direct answer" path used when the tool-call
+            # cap is reached - same graceful-degradation principle as the
+            # JSON-parse retry, just for a failure that surfaces as an
+            # HTTP error instead of a malformed body.
+            break
+
         message = response["choices"][0]["message"]
         messages.append(message)
 
         tool_calls = message.get("tool_calls")
         if not tool_calls:
-            answer, table = _parse_final_answer(message.get("content") or "")
+            answer, table = await _finalize_answer(messages, message.get("content") or "", call_fn)
             return {"answer": answer, "tools_used": tools_used, "table": table}
 
         for call in tool_calls:
@@ -332,11 +394,14 @@ async def _answer_question_groq(question: str, owner_id: int, model: str) -> dic
 
             messages.append({"role": "tool", "tool_call_id": call["id"], "content": content})
 
-    # Tool-call cap reached and the model still wanted another tool call;
-    # force a final answer from whatever's been gathered so far.
+    # Either the tool-call cap was reached and the model still wanted
+    # another tool call, or the loop above gave up on tool use after a
+    # failed call - either way, force a final answer from whatever's been
+    # gathered so far.
     final_response = await call_groq(messages, model=model)
     final_message = final_response["choices"][0]["message"]
-    answer, table = _parse_final_answer(final_message.get("content") or "")
+    messages.append(final_message)
+    answer, table = await _finalize_answer(messages, final_message.get("content") or "", call_fn)
     return {"answer": answer, "tools_used": tools_used, "table": table}
 
 
