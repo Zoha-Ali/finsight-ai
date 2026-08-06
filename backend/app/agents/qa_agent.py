@@ -7,6 +7,7 @@ from datetime import date
 import httpx
 from dotenv import load_dotenv
 
+from ..groq_client import call_groq, is_groq_model
 from ..mcp_server import get_anomalies, get_budget, get_monthly_summary, get_transactions
 
 load_dotenv()
@@ -100,6 +101,23 @@ TOOL_FUNCTIONS = {
     "get_budget": get_budget,
     "get_anomalies": get_anomalies,
 }
+
+# Groq's chat completions API is OpenAI-compatible, which uses a
+# differently-shaped tool schema than Anthropic's Messages API
+# ({"type": "function", "function": {...}} vs {"name", "description",
+# "input_schema"}) - derived from TOOLS above rather than duplicated, so
+# the two tool lists can't drift out of sync.
+GROQ_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": tool["name"],
+            "description": tool["description"],
+            "parameters": tool["input_schema"],
+        },
+    }
+    for tool in TOOLS
+]
 
 
 def _system_prompt() -> str:
@@ -210,9 +228,18 @@ async def answer_question(question: str, owner_id: int, model: str = MODEL) -> d
     includes an optional "table" - populated with rows when the data is
     naturally tabular (e.g. a transaction list or category breakdown),
     left null for single-value answers. `model` defaults to this module's
-    standard model but can be overridden (see compare_models) to run the
-    identical loop against a different one.
+    standard Anthropic model but can be overridden (see compare_models and
+    supervisor_agent's routing) to run the identical loop against a
+    different one - Anthropic models go through _answer_question_anthropic,
+    the Groq model through _answer_question_groq, since the two providers'
+    tool-calling wire formats aren't compatible.
     """
+    if is_groq_model(model):
+        return await _answer_question_groq(question, owner_id, model)
+    return await _answer_question_anthropic(question, owner_id, model)
+
+
+async def _answer_question_anthropic(question: str, owner_id: int, model: str) -> dict:
     messages: list[dict] = [{"role": "user", "content": question}]
     tools_used: list[str] = []
 
@@ -265,6 +292,51 @@ async def answer_question(question: str, owner_id: int, model: str = MODEL) -> d
     # force a final answer from whatever's been gathered so far.
     final_response = await _call_model(messages, allow_tools=False, model=model)
     answer, table = _parse_final_answer(_extract_text(final_response["content"]))
+    return {"answer": answer, "tools_used": tools_used, "table": table}
+
+
+async def _answer_question_groq(question: str, owner_id: int, model: str) -> dict:
+    """Same ReAct loop as _answer_question_anthropic, against Groq's
+    OpenAI-compatible chat completions API instead - tool calls arrive as
+    message.tool_calls (JSON-string arguments) rather than Anthropic's
+    typed content blocks, and results are sent back as role="tool"
+    messages instead of a tool_result content block, but the underlying
+    tools, prompt, and final-answer parsing are identical.
+    """
+    messages: list[dict] = [
+        {"role": "system", "content": _system_prompt()},
+        {"role": "user", "content": question},
+    ]
+    tools_used: list[str] = []
+
+    while len(tools_used) < MAX_TOOL_CALLS:
+        response = await call_groq(messages, model=model, tools=GROQ_TOOLS)
+        message = response["choices"][0]["message"]
+        messages.append(message)
+
+        tool_calls = message.get("tool_calls")
+        if not tool_calls:
+            answer, table = _parse_final_answer(message.get("content") or "")
+            return {"answer": answer, "tools_used": tools_used, "table": table}
+
+        for call in tool_calls:
+            tool_name = call["function"]["name"]
+            tools_used.append(tool_name)
+
+            try:
+                tool_input = json.loads(call["function"]["arguments"] or "{}")
+                result = await _run_tool(tool_name, tool_input, owner_id)
+                content = json.dumps(result)
+            except Exception as exc:
+                content = json.dumps({"error": str(exc)})
+
+            messages.append({"role": "tool", "tool_call_id": call["id"], "content": content})
+
+    # Tool-call cap reached and the model still wanted another tool call;
+    # force a final answer from whatever's been gathered so far.
+    final_response = await call_groq(messages, model=model)
+    final_message = final_response["choices"][0]["message"]
+    answer, table = _parse_final_answer(final_message.get("content") or "")
     return {"answer": answer, "tools_used": tools_used, "table": table}
 
 

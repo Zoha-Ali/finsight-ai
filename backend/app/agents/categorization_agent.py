@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from sqlalchemy import select
 
 from ..database import AsyncSessionLocal
+from ..groq_client import call_groq, is_groq_model
 from ..mcp_server import get_transactions, get_weekly_average
 from ..models import Anomaly, Category, Transaction
 from .tracing import save_trace
@@ -23,17 +24,19 @@ CATEGORIES = ["food", "transport", "shopping", "entertainment", "bills", "health
 ANOMALY_MULTIPLIER = 2.5
 
 
-async def _predict_category(merchant: str, amount: float) -> str:
-    """Ask claude-haiku-4-5 to pick a category, over a raw HTTP call.
+async def _predict_category(merchant: str, amount: float, model: str = MODEL) -> str:
+    """Ask a model to pick a category, over a raw HTTP call.
 
     This bypasses the anthropic SDK on purpose: the SDK's jiter dependency
     has previously been blocked by Windows Application Control on this
     project's dev machines, so agent code talks to the Messages API
     directly via httpx instead of depending on the SDK being importable.
+    `model` defaults to this module's standard Anthropic model but is
+    routed to Groq instead when it's the Groq model (see
+    supervisor_agent.py's simple/complex classification, which sends
+    "simple" categorization requests here) - the prompt and category
+    parsing are identical either way, only the HTTP call differs.
     """
-    if not ANTHROPIC_API_KEY:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set in the environment")
-
     prompt = (
         "Classify this transaction into exactly one category from this "
         f"list: {', '.join(CATEGORIES)}.\n\n"
@@ -42,24 +45,32 @@ async def _predict_category(merchant: str, amount: float) -> str:
         "Respond with only the category name, lowercase, and nothing else."
     )
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            ANTHROPIC_API_URL,
-            headers={
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": ANTHROPIC_VERSION,
-                "content-type": "application/json",
-            },
-            json={
-                "model": MODEL,
-                "max_tokens": 16,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-        )
-        response.raise_for_status()
-        data = response.json()
+    if is_groq_model(model):
+        data = await call_groq([{"role": "user", "content": prompt}], model=model, max_tokens=16)
+        predicted = data["choices"][0]["message"]["content"].strip().lower()
+    else:
+        if not ANTHROPIC_API_KEY:
+            raise RuntimeError("ANTHROPIC_API_KEY is not set in the environment")
 
-    predicted = data["content"][0]["text"].strip().lower()
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                ANTHROPIC_API_URL,
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": ANTHROPIC_VERSION,
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "max_tokens": 16,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        predicted = data["content"][0]["text"].strip().lower()
+
     return predicted if predicted in CATEGORIES else "other"
 
 
@@ -110,10 +121,12 @@ async def _get_anomaly_baseline(
     return average, description
 
 
-async def categorize_transaction(transaction_id: int, owner_id: int) -> dict:
+async def categorize_transaction(transaction_id: int, owner_id: int, model: str = MODEL) -> dict:
     """Categorize a transaction and flag it as an anomaly if it stands out.
 
-    Predicts a category with claude-haiku-4-5, then compares the
+    Predicts a category with `model` (defaults to this module's standard
+    Anthropic model; the Supervisor overrides this to route "simple"
+    categorization requests to Groq/Llama instead), then compares the
     transaction's amount (in Python, not by the LLM) against the user's
     average weekly spend in that category - falling back to the average
     of recent same-category transactions if there's no distinct prior
@@ -132,7 +145,7 @@ async def categorize_transaction(transaction_id: int, owner_id: int) -> dict:
         if transaction is None:
             raise ValueError(f"Transaction {transaction_id} not found for owner {owner_id}")
 
-        predicted_category = await _predict_category(transaction.merchant, transaction.amount)
+        predicted_category = await _predict_category(transaction.merchant, transaction.amount, model=model)
 
         category_result = await session.execute(
             select(Category).where(Category.name == predicted_category)
