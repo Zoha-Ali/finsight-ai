@@ -49,8 +49,8 @@ export interface ModelCompareResult {
 
 export interface CompareModelsResponse {
   question: string
-  haiku: ModelCompareResult
   sonnet: ModelCompareResult
+  groq: ModelCompareResult
 }
 
 export type ForecastComparisonType = 'budget' | 'historical_average' | 'no_data'

@@ -199,7 +199,10 @@ async def test_answer_question_groq_degrades_gracefully_when_retry_also_malforme
 # "tool_use_failed", before any response body exists to parse - a
 # different failure shape than a malformed-but-parseable JSON body, so it
 # needs its own deliberate test rather than being covered by the JSON
-# fallback tests above.
+# fallback tests above. Confirmed live that this happens on roughly half
+# of attempts against the same question, so this needs a real retry, not
+# just a fallback to answering with no data (which produces an honest but
+# useless "I don't know" - the bug this was rewritten to fix).
 
 
 def _tool_use_failed_error() -> httpx.HTTPStatusError:
@@ -212,42 +215,93 @@ def _tool_use_failed_error() -> httpx.HTTPStatusError:
     return httpx.HTTPStatusError("400 Bad Request", request=request, response=response)
 
 
-async def test_answer_question_groq_falls_back_to_a_direct_answer_when_the_tool_call_itself_fails(
-    monkeypatch,
-):
+async def test_answer_question_groq_retries_once_on_the_same_model_when_the_tool_call_fails(monkeypatch):
     calls: list[dict] = []
 
     async def fake_call_groq(messages, model=None, tools=None, **kwargs):
-        calls.append({"tools": tools})
-        if tools is not None:
-            # the tool-requesting call fails outright - no body to parse
+        calls.append({"model": model, "tools": tools})
+        if len(calls) == 1:
+            # first attempt: Groq rejects the malformed tool call outright
             raise _tool_use_failed_error()
-        # the fallback "force a direct answer" call succeeds normally
-        return _groq_response(content='{"answer": "I could not look that up right now.", "table": null}')
+        # retry against the SAME model succeeds and actually uses a tool
+        if len(calls) == 2:
+            return _groq_response(tool_calls=[{"id": "c1", "function": {"name": "get_transactions", "arguments": "{}"}}])
+        return _groq_response(content='{"answer": "Your latest transaction was $42.50.", "table": null}')
 
     monkeypatch.setattr(qa_agent, "call_groq", fake_call_groq)
+    monkeypatch.setattr(qa_agent, "_run_tool", AsyncMock(return_value=[{"merchant": "Trader Joe's", "amount": 42.5}]))
 
-    # must not raise, despite the tool-requesting call blowing up
-    result = await qa_agent.answer_question(
-        "What are my recent transactions?", owner_id=1, model="llama-3.3-70b-versatile"
-    )
+    result = await qa_agent.answer_question("what's my latest transaction", owner_id=1, model="llama-3.3-70b-versatile")
 
-    assert result["answer"] == "I could not look that up right now."
-    assert result["tools_used"] == []  # gave up on tools entirely, never got to use one
-    assert calls[0]["tools"] is not None  # first attempt did try to offer tools
-    assert calls[-1]["tools"] is None  # the fallback call must not retry tools again
+    assert result["answer"] == "Your latest transaction was $42.50."
+    assert result["tools_used"] == ["get_transactions"]  # the retry's tool call was actually used
+    assert result["recovery_path"] == "groq_retry"
+    assert result["model_used"] == "llama-3.3-70b-versatile"  # stayed on Groq, no fallback needed
+    # both the failed attempt and the successful retry offered tools on the same model
+    assert calls[0]["model"] == "llama-3.3-70b-versatile" and calls[0]["tools"] is not None
+    assert calls[1]["model"] == "llama-3.3-70b-versatile" and calls[1]["tools"] is not None
 
 
-async def test_answer_question_groq_falls_back_gracefully_even_if_the_no_tools_call_also_fails(monkeypatch):
+async def test_answer_question_groq_falls_back_to_sonnet_when_both_groq_attempts_fail(monkeypatch):
+    groq_calls: list[dict] = []
+    anthropic_calls: list[dict] = []
+
+    async def fake_call_groq(messages, model=None, tools=None, **kwargs):
+        groq_calls.append({"model": model, "tools": tools})
+        raise _tool_use_failed_error()  # fails every time it's asked to offer tools
+
+    async def fake_call_model(messages, allow_tools, model=qa_agent.MODEL):
+        anthropic_calls.append({"model": model, "allow_tools": allow_tools})
+        return _anthropic_response('{"answer": "Your latest transaction was $42.50.", "table": null}')
+
+    monkeypatch.setattr(qa_agent, "call_groq", fake_call_groq)
+    monkeypatch.setattr(qa_agent, "_call_model", fake_call_model)
+
+    # must not raise, and must not fabricate a no-data answer - both Groq
+    # attempts failing should produce a real, data-grounded Sonnet answer
+    result = await qa_agent.answer_question("what's my latest transaction", owner_id=1, model="llama-3.3-70b-versatile")
+
+    assert result["answer"] == "Your latest transaction was $42.50."
+    assert result["recovery_path"] == "sonnet_fallback"
+    assert result["model_used"] == qa_agent.SONNET_MODEL  # NOT the originally-requested Groq model
+    assert len(groq_calls) == 2  # original attempt + one retry, both on Groq
+    assert all(c["tools"] is not None for c in groq_calls)  # both attempts actually tried to offer tools
+    assert len(anthropic_calls) == 1
+    assert anthropic_calls[0]["model"] == qa_agent.SONNET_MODEL
+    assert anthropic_calls[0]["allow_tools"] is True  # the Sonnet fallback must have tools available
+
+
+async def test_answer_question_groq_propagates_if_the_sonnet_fallback_itself_also_fails(monkeypatch):
     async def fake_call_groq(messages, model=None, tools=None, **kwargs):
         raise _tool_use_failed_error()
 
-    monkeypatch.setattr(qa_agent, "call_groq", fake_call_groq)
+    async def failing_call_model(messages, allow_tools, model=qa_agent.MODEL):
+        raise httpx.ConnectError("network is down")
 
-    # a total API outage on both the tool-requesting AND the fallback call
-    # is a genuine failure with nothing left to gracefully degrade to -
-    # this should propagate, not silently fabricate an answer.
-    with pytest.raises(httpx.HTTPStatusError):
-        await qa_agent.answer_question(
-            "What are my recent transactions?", owner_id=1, model="llama-3.3-70b-versatile"
-        )
+    monkeypatch.setattr(qa_agent, "call_groq", fake_call_groq)
+    monkeypatch.setattr(qa_agent, "_call_model", failing_call_model)
+
+    # a total outage on both Groq AND the Sonnet fallback is a genuine
+    # failure with nothing left to gracefully degrade to - this should
+    # propagate, not silently fabricate an answer.
+    with pytest.raises(httpx.ConnectError):
+        await qa_agent.answer_question("what's my latest transaction", owner_id=1, model="llama-3.3-70b-versatile")
+
+
+async def test_compare_models_labels_a_fallen_back_groq_side_as_sonnet(monkeypatch):
+    # If the "groq" side of Compare Models had to fall back to Sonnet, the
+    # UI must not keep labeling that card "Llama 3.3 70B (Groq)" - it has
+    # to report the model that actually answered.
+    async def fake_call_groq(messages, model=None, tools=None, **kwargs):
+        raise _tool_use_failed_error()
+
+    async def fake_call_model(messages, allow_tools, model=qa_agent.MODEL):
+        return _anthropic_response('{"answer": "real answer", "table": null}')
+
+    monkeypatch.setattr(qa_agent, "call_groq", fake_call_groq)
+    monkeypatch.setattr(qa_agent, "_call_model", fake_call_model)
+
+    result = await qa_agent.compare_models("what's my latest transaction", owner_id=1)
+
+    assert result["groq"]["model"] == qa_agent.SONNET_MODEL
+    assert result["groq"]["answer"] == "real answer"

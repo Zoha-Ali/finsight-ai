@@ -113,8 +113,8 @@ class ModelCompareResult(BaseModel):
 
 class CompareModelsResponse(BaseModel):
     question: str
-    haiku: ModelCompareResult
     sonnet: ModelCompareResult
+    groq: ModelCompareResult
 
 
 class CategoryOut(BaseModel):

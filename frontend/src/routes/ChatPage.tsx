@@ -10,8 +10,8 @@ interface ChatEntry {
 }
 
 const MODEL_LABELS: Record<string, string> = {
-  'claude-haiku-4-5': 'Claude Haiku 4.5',
   'claude-sonnet-5': 'Claude Sonnet 5',
+  'llama-3.3-70b-versatile': 'Llama 3.3 70B (Groq)',
 }
 
 // POST /qa is routed through the supervisor, which can dispatch to the qa,
@@ -106,8 +106,56 @@ export default function ChatPage() {
     }
   }
 
+  const inputArea = (
+    <div className="space-y-3">
+      <label className="flex items-center gap-2 text-sm text-ink-muted cursor-pointer w-fit">
+        <input
+          type="checkbox"
+          checked={compareMode}
+          onChange={(e) => setCompareMode(e.target.checked)}
+          disabled={loading}
+          className="rounded border-border text-primary focus:ring-primary/30"
+        />
+        Compare models (Claude Sonnet 5 vs Llama 3.3 70B on Groq)
+      </label>
+
+      <form onSubmit={handleSubmit} className="flex gap-2">
+        <input
+          type="text"
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          placeholder="Ask a question about your spending…"
+          disabled={loading}
+          className="flex-1 rounded-md border border-border bg-surface-card px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary disabled:opacity-60"
+        />
+        <button
+          type="submit"
+          disabled={loading || !question.trim()}
+          className="bg-primary hover:bg-primary-hover disabled:opacity-60 text-white text-sm font-medium px-4 py-2.5 rounded-md transition-colors"
+        >
+          Send
+        </button>
+      </form>
+      {loading && (
+        <p className="text-sm text-ink-muted">{compareMode ? 'Asking both models…' : 'Thinking…'}</p>
+      )}
+    </div>
+  )
+
+  // Before any messages exist, the input sits in its normal place in the
+  // page flow. Once there's history, it switches to a bar FIXED to the
+  // bottom of the viewport - like a normal chat interface, so new
+  // messages append above a fixed input instead of the input drifting
+  // below an ever-growing conversation. This has to be position:fixed,
+  // not sticky - sticky only pins once its container has scrollable
+  // overflow, so with just one short message (page shorter than the
+  // viewport) a sticky bar just sits in normal flow wherever it falls,
+  // nowhere near the bottom. pb-40 on the page reserves room for the
+  // fixed bar's own height so the last message isn't hidden behind it.
+  const hasHistory = history.length > 0
+
   return (
-    <div className="space-y-6">
+    <div className={hasHistory ? 'space-y-6 pb-40' : 'space-y-6'}>
       <div>
         <h1 className="text-xl font-semibold text-ink">Ask FinSight</h1>
         <p className="text-sm text-ink-muted mt-1">
@@ -132,8 +180,8 @@ export default function ChatPage() {
             </div>
             {entry.compare ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <ModelAnswerCard result={entry.compare.haiku} />
                 <ModelAnswerCard result={entry.compare.sonnet} />
+                <ModelAnswerCard result={entry.compare.groq} />
               </div>
             ) : (
               <div className="flex justify-start">
@@ -178,38 +226,12 @@ export default function ChatPage() {
         </p>
       )}
 
-      <label className="flex items-center gap-2 text-sm text-ink-muted cursor-pointer w-fit">
-        <input
-          type="checkbox"
-          checked={compareMode}
-          onChange={(e) => setCompareMode(e.target.checked)}
-          disabled={loading}
-          className="rounded border-border text-primary focus:ring-primary/30"
-        />
-        Compare models (claude-haiku-4-5 vs claude-sonnet-5)
-      </label>
-
-      <form onSubmit={handleSubmit} className="flex gap-2">
-        <input
-          type="text"
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          placeholder="Ask a question about your spending…"
-          disabled={loading}
-          className="flex-1 rounded-md border border-border bg-surface-card px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary disabled:opacity-60"
-        />
-        <button
-          type="submit"
-          disabled={loading || !question.trim()}
-          className="bg-primary hover:bg-primary-hover disabled:opacity-60 text-white text-sm font-medium px-4 py-2.5 rounded-md transition-colors"
-        >
-          Send
-        </button>
-      </form>
-      {loading && (
-        <p className="text-sm text-ink-muted">
-          {compareMode ? 'Asking both models…' : 'Thinking…'}
-        </p>
+      {hasHistory ? (
+        <div className="fixed inset-x-0 bottom-0 bg-surface border-t border-border">
+          <div className="max-w-5xl mx-auto px-6 py-3">{inputArea}</div>
+        </div>
+      ) : (
+        inputArea
       )}
     </div>
   )

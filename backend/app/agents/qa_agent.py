@@ -7,7 +7,7 @@ from datetime import date
 import httpx
 from dotenv import load_dotenv
 
-from ..groq_client import call_groq, is_groq_model
+from ..groq_client import GROQ_MODEL, call_groq, is_groq_model
 from ..mcp_server import get_anomalies, get_budget, get_monthly_summary, get_transactions
 
 load_dotenv()
@@ -16,11 +16,14 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
 MODEL = "claude-haiku-4-5"
+SONNET_MODEL = "claude-sonnet-5"
 
 # Models available for the side-by-side comparison feature - both run the
 # identical tool-use loop against the same real data, so any difference in
-# the answers reflects the model itself, not the pipeline.
-COMPARISON_MODELS = {"haiku": "claude-haiku-4-5", "sonnet": "claude-sonnet-5"}
+# the answers reflects the model itself, not the pipeline. Matches the
+# actual automatic routing split in supervisor_agent.py (Groq/Llama for
+# simple requests, Sonnet for complex ones), rather than an unrelated pair.
+COMPARISON_MODELS = {"sonnet": SONNET_MODEL, "groq": GROQ_MODEL}
 
 MAX_TOOL_CALLS = 4
 
@@ -273,8 +276,15 @@ async def answer_question(question: str, owner_id: int, model: str = MODEL) -> d
     tool-calling wire formats aren't compatible.
     """
     if is_groq_model(model):
-        return await _answer_question_groq(question, owner_id, model)
-    return await _answer_question_anthropic(question, owner_id, model)
+        result = await _answer_question_groq(question, owner_id, model)
+    else:
+        result = await _answer_question_anthropic(question, owner_id, model)
+
+    # _answer_question_groq sets this itself when it had to fall back to a
+    # different model (see there) - setdefault leaves that in place rather
+    # than stomping it back to the originally-requested model.
+    result.setdefault("model_used", model)
+    return result
 
 
 async def _answer_question_anthropic(question: str, owner_id: int, model: str) -> dict:
@@ -339,6 +349,29 @@ async def _answer_question_anthropic(question: str, owner_id: int, model: str) -
     return {"answer": answer, "tools_used": tools_used, "table": table}
 
 
+async def _call_groq_with_tools_recovering(messages: list[dict], model: str) -> tuple[dict | None, bool]:
+    """Call Groq offering tools, retrying once if Groq's API itself
+    rejects the tool-call attempt. Returns (response, retried) - response
+    is None only if both attempts failed; retried is True if the first
+    attempt failed but the second one succeeded.
+
+    Llama on Groq occasionally emits a malformed function-call (e.g. an
+    XML-ish <function=...> tag instead of a proper tool_calls entry),
+    which Groq's own API rejects outright with a 400 "tool_use_failed"
+    before we ever see a response to parse - this is intermittent (roughly
+    half the attempts against the same question in testing), so a second
+    attempt against the same prompt often just succeeds. The caller
+    decides what to do if both attempts fail (rather than this silently
+    forcing a no-data answer, which is what used to happen here).
+    """
+    for attempt in range(2):
+        try:
+            return await call_groq(messages, model=model, tools=GROQ_TOOLS), attempt == 1
+        except httpx.HTTPStatusError:
+            continue
+    return None, False
+
+
 async def _answer_question_groq(question: str, owner_id: int, model: str) -> dict:
     """Same ReAct loop as _answer_question_anthropic, against Groq's
     OpenAI-compatible chat completions API instead - tool calls arrive as
@@ -346,6 +379,16 @@ async def _answer_question_groq(question: str, owner_id: int, model: str) -> dic
     typed content blocks, and results are sent back as role="tool"
     messages instead of a tool_result content block, but the underlying
     tools, prompt, and final-answer parsing are identical.
+
+    If Groq's own API rejects the tool-call attempt twice in a row (see
+    _call_groq_with_tools_recovering), this falls back to a fresh request
+    to Sonnet (with tools) rather than forcing Llama to answer with zero
+    data - which technically "degrades gracefully" but produces an
+    honest-but-useless "I don't have enough information" answer instead
+    of the real, data-grounded one Sonnet can actually get. The result
+    carries "model_used" and "recovery_path" so callers (route_request's
+    trace, compare_models) can tell what actually happened rather than
+    assuming the originally-requested model answered.
     """
     async def call_fn(msgs: list[dict]) -> str:
         response = await call_groq(msgs, model=model)
@@ -356,22 +399,20 @@ async def _answer_question_groq(question: str, owner_id: int, model: str) -> dic
         {"role": "user", "content": question},
     ]
     tools_used: list[str] = []
+    recovery_path: str | None = None
 
     while len(tools_used) < MAX_TOOL_CALLS:
-        try:
-            response = await call_groq(messages, model=model, tools=GROQ_TOOLS)
-        except httpx.HTTPStatusError:
-            # Llama on Groq occasionally emits a malformed function-call
-            # (e.g. an XML-ish <function=...> tag instead of a proper
-            # tool_calls entry), which Groq's own API rejects outright
-            # with a 400 "tool_use_failed" before we ever see a response
-            # to parse. Rather than crash the whole request over a single
-            # bad generation, give up on tool use and fall through to the
-            # same "force a direct answer" path used when the tool-call
-            # cap is reached - same graceful-degradation principle as the
-            # JSON-parse retry, just for a failure that surfaces as an
-            # HTTP error instead of a malformed body.
-            break
+        response, retried = await _call_groq_with_tools_recovering(messages, model)
+        if response is None:
+            # Both the original attempt and the retry failed to produce a
+            # usable tool call - fall back to Sonnet with tools instead of
+            # asking Llama a second time with nothing to go on.
+            result = await _answer_question_anthropic(question, owner_id, SONNET_MODEL)
+            result["model_used"] = SONNET_MODEL
+            result["recovery_path"] = "sonnet_fallback"
+            return result
+        if retried:
+            recovery_path = "groq_retry"
 
         message = response["choices"][0]["message"]
         messages.append(message)
@@ -379,7 +420,7 @@ async def _answer_question_groq(question: str, owner_id: int, model: str) -> dic
         tool_calls = message.get("tool_calls")
         if not tool_calls:
             answer, table = await _finalize_answer(messages, message.get("content") or "", call_fn)
-            return {"answer": answer, "tools_used": tools_used, "table": table}
+            return {"answer": answer, "tools_used": tools_used, "table": table, "recovery_path": recovery_path}
 
         for call in tool_calls:
             tool_name = call["function"]["name"]
@@ -394,34 +435,38 @@ async def _answer_question_groq(question: str, owner_id: int, model: str) -> dic
 
             messages.append({"role": "tool", "tool_call_id": call["id"], "content": content})
 
-    # Either the tool-call cap was reached and the model still wanted
-    # another tool call, or the loop above gave up on tool use after a
-    # failed call - either way, force a final answer from whatever's been
-    # gathered so far.
+    # Tool-call cap reached and the model still wanted another tool call;
+    # force a final answer from whatever's been gathered so far.
     final_response = await call_groq(messages, model=model)
     final_message = final_response["choices"][0]["message"]
     messages.append(final_message)
     answer, table = await _finalize_answer(messages, final_message.get("content") or "", call_fn)
-    return {"answer": answer, "tools_used": tools_used, "table": table}
+    return {"answer": answer, "tools_used": tools_used, "table": table, "recovery_path": recovery_path}
 
 
 async def _timed_answer(question: str, owner_id: int, model: str) -> dict:
     start = time.perf_counter()
     result = await answer_question(question, owner_id, model=model)
     elapsed = time.perf_counter() - start
-    return {**result, "model": model, "elapsed_seconds": round(elapsed, 2)}
+    # result["model_used"] reflects what actually answered - if the Groq
+    # side had to fall back to Sonnet, this must say so rather than
+    # mislabeling a Sonnet answer as the originally-requested Groq model.
+    return {**result, "model": result.get("model_used", model), "elapsed_seconds": round(elapsed, 2)}
 
 
 async def compare_models(question: str, owner_id: int) -> dict:
-    """Answer the same question with claude-haiku-4-5 and claude-sonnet-5.
+    """Answer the same question with claude-sonnet-5 and Llama-via-Groq.
 
     Runs the identical tool-use loop from answer_question() against each
     model concurrently, both scoped to the same owner_id and hitting the
     same real data - so any difference between the two answers reflects
-    the model itself, not the pipeline or the data available to it.
+    the model itself, not the pipeline or the data available to it. Uses
+    the same two models the Supervisor's automatic complexity routing
+    chooses between (see supervisor_agent.py), so this mode doubles as a
+    manual "what would each path have answered" comparison.
     """
-    haiku_result, sonnet_result = await asyncio.gather(
-        _timed_answer(question, owner_id, COMPARISON_MODELS["haiku"]),
+    sonnet_result, groq_result = await asyncio.gather(
         _timed_answer(question, owner_id, COMPARISON_MODELS["sonnet"]),
+        _timed_answer(question, owner_id, COMPARISON_MODELS["groq"]),
     )
-    return {"haiku": haiku_result, "sonnet": sonnet_result}
+    return {"sonnet": sonnet_result, "groq": groq_result}

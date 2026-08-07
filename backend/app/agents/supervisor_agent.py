@@ -164,7 +164,11 @@ async def route_request(request: str, owner_id: int) -> dict:
                 "agent": "qa_agent",
                 "called_with": {"question": request, "owner_id": owner_id},
                 "returned": result,
-                "model_used": chosen_model,
+                # result["model_used"] reflects what actually answered -
+                # qa_agent falls back to Sonnet when Groq's tool-call
+                # attempt fails twice in a row, so this can differ from
+                # chosen_model (the routing decision, not the outcome).
+                "model_used": result.get("model_used", chosen_model),
             }
         )
 

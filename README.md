@@ -44,6 +44,24 @@ Anomaly detection isn't a separate agent — it lives inside the Categorization 
 
 ## Setup
 
+### Option A: Docker (fully containerized)
+
+Backend and frontend both run in containers; the database is still the real, externally-hosted Neon instance (there's no local Postgres container - Neon already provides that).
+
+```bash
+git clone <repo-url>
+cd finsight-ai
+
+cp .env.example .env
+# edit .env and fill in DATABASE_URL, SECRET_KEY, ANTHROPIC_API_KEY, GROQ_API_KEY
+
+docker compose up --build
+```
+
+That's it - the backend applies any pending Alembic migrations on startup, then serves on `http://localhost:8000`; the frontend builds and serves on `http://localhost:5173`. Both ports, and the CORS origin the backend accepts, are configurable via `.env` (see the commented-out `CORS_ORIGINS`/`VITE_API_BASE_URL` lines in `.env.example`) if you need to change them from the defaults.
+
+### Option B: Manual (run each side locally)
+
 ```bash
 git clone <repo-url>
 cd finsight-ai/backend
@@ -65,7 +83,7 @@ npm install
 npm run dev
 ```
 
-The frontend expects the backend at `http://localhost:8000` by default (override with a `VITE_API_BASE_URL` env var); the backend allows CORS from `http://localhost:5173`.
+The frontend expects the backend at `http://localhost:8000` by default (override with a `VITE_API_BASE_URL` env var); the backend allows CORS from `http://localhost:5173` (override with a `CORS_ORIGINS` env var, comma-separated).
 
 ## Status
 
@@ -80,10 +98,11 @@ The frontend expects the backend at `http://localhost:8000` by default (override
 - Budget management: set/update/remove per category, upsert (not duplicate) on repeat submission
 - Transaction CRUD: create, list (with category name + estimated-date flag), delete
 - Frontend (React + Vite + TypeScript + Tailwind): login/signup, Dashboard (transactions + receipt/statement upload merged into one view, delete), Forecast (projections, budget management inline), Chat (Q&A) — loading, error, and empty states implemented throughout
-- Test suite: 84 tests (pytest + pytest-asyncio, transactional-rollback isolation against the real Neon schema), 66% overall coverage, with every priority area — auth, models, forecasting math, categorization anomaly logic, route-level auth protection, budget upsert — above 70%, several at 100%
+- Test suite: 106 tests (pytest + pytest-asyncio, transactional-rollback isolation against the real Neon schema), 70% overall coverage, with every priority area — auth, models, forecasting math, categorization anomaly logic, route-level auth protection, budget upsert — above 70%, several at 100%
+- Output validation: every LLM call point that expects structured output (categorization's category prediction, Q&A's final-answer JSON on both the Anthropic and Groq paths) retries once on a malformed response before falling back gracefully; Forecasting's summary call falls back to a deterministic generic summary if the API call itself fails, rather than the whole forecast erroring out
+- Deployment: fully containerized locally via Docker (`backend/Dockerfile`, `frontend/Dockerfile`, root `docker-compose.yml`) - see Setup below
 
 **Next:**
 - Memory layer (agents are currently stateless aside from the `Trace` log)
-- Consistent output-validation/retry pattern across all agents (currently only the Receipt Agent retries on invalid model JSON)
-- Deployment (containerized or hosted)
+- Hosted deployment (the Docker setup runs locally; nothing's deployed to a public host yet)
 - Presentation materials (slides, demo video, reflection doc)
