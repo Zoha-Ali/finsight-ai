@@ -144,7 +144,9 @@ def _system_prompt() -> str:
         "answer (a total, a yes/no, a single number) where there's no "
         'natural list of rows. "answer" should always be a clear, concise '
         "natural-language summary regardless of whether table is "
-        f"populated. Today's date is {date.today().isoformat()}."
+        "populated. All monetary amounts are in Pakistani Rupees - format "
+        'them as "Rs. " followed by the number (e.g. "Rs. 1500.00"), never '
+        f'"$". Today\'s date is {date.today().isoformat()}.'
     )
 
 

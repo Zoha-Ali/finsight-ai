@@ -27,17 +27,17 @@ MIN_HISTORY_MONTHS = 1
 
 def _forecast_line(forecast: dict) -> str:
     line = (
-        f"- {forecast['category']}: spent ${forecast['spent_so_far']:.2f} so far, "
-        f"projected to reach ${forecast['projected_total']:.2f} by month end"
+        f"- {forecast['category']}: spent Rs. {forecast['spent_so_far']:.2f} so far, "
+        f"projected to reach Rs. {forecast['projected_total']:.2f} by month end"
     )
 
     comparison_type = forecast["comparison_type"]
     if comparison_type == "budget":
-        line += f" (compared against your budget of ${forecast['budget_limit']:.2f})"
+        line += f" (compared against your budget of Rs. {forecast['budget_limit']:.2f})"
     elif comparison_type == "historical_average":
         line += (
             " (no budget set for this category, so compared against your "
-            f"historical average of ${forecast['historical_average']:.2f}/month)"
+            f"historical average of Rs. {forecast['historical_average']:.2f}/month)"
         )
     else:
         line += " (no budget set and not enough history yet to compare against)"
@@ -46,7 +46,7 @@ def _forecast_line(forecast: dict) -> str:
         baseline = forecast["budget_limit"] if comparison_type == "budget" else forecast["historical_average"]
         over_by = forecast["projected_total"] - baseline
         verb = "OVER BUDGET" if comparison_type == "budget" else "ABOVE YOUR TYPICAL SPENDING"
-        line += f" - ON TRACK TO BE {verb} by ${over_by:.2f}"
+        line += f" - ON TRACK TO BE {verb} by Rs. {over_by:.2f}"
 
     return line
 
@@ -97,7 +97,9 @@ async def _summarize(forecasts: list[dict]) -> str:
         "spending\" rather than implying something is a budget when it "
         "isn't). Only phrase and summarize the numbers given below - do "
         "not recalculate, estimate, or introduce any number that isn't "
-        "already present.\n\n" + "\n".join(_forecast_line(f) for f in forecasts)
+        "already present. All amounts are in Pakistani Rupees - use the "
+        "same \"Rs. \" notation shown below, never \"$\".\n\n"
+        + "\n".join(_forecast_line(f) for f in forecasts)
     )
 
     async with httpx.AsyncClient(timeout=30.0) as client:

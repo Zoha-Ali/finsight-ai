@@ -75,7 +75,7 @@ async def _predict_category(merchant: str, amount: float, model: str = MODEL) ->
         "Classify this transaction into exactly one category from this "
         f"list: {', '.join(CATEGORIES)}.\n\n"
         f"Merchant: {merchant}\n"
-        f"Amount: ${amount:.2f}\n\n"
+        f"Amount: Rs. {amount:.2f}\n\n"
         "Respond with only the category name, lowercase, and nothing else."
     )
     messages: list[dict] = [{"role": "user", "content": prompt}]
@@ -128,7 +128,7 @@ async def _get_anomaly_baseline(
     if weekly is not None and weekly["average_weekly_spend"] > 0:
         weeks = weekly["weeks_counted"]
         description = (
-            f"${weekly['average_weekly_spend']:.2f}/week average spend in this "
+            f"Rs. {weekly['average_weekly_spend']:.2f}/week average spend in this "
             f"category across {weeks} prior week{'s' if weeks != 1 else ''}"
         )
         return weekly["average_weekly_spend"], description
@@ -144,7 +144,7 @@ async def _get_anomaly_baseline(
 
     average = sum(same_category_amounts) / len(same_category_amounts)
     description = (
-        f"${average:.2f} average of the user's last {len(same_category_amounts)} "
+        f"Rs. {average:.2f} average of the user's last {len(same_category_amounts)} "
         "transactions in this category"
     )
     return average, description
@@ -194,7 +194,7 @@ async def categorize_transaction(transaction_id: int, owner_id: int, model: str 
         if average is not None and average > 0 and transaction.amount > ANOMALY_MULTIPLIER * average:
             is_anomaly = True
             reason = (
-                f"Amount ${transaction.amount:.2f} is "
+                f"Amount Rs. {transaction.amount:.2f} is "
                 f"{transaction.amount / average:.1f}x the {baseline_description}."
             )
 

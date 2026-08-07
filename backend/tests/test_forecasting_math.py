@@ -223,11 +223,11 @@ def test_forecast_line_formats_a_budget_comparison_and_overspend_flag():
         }
     )
     assert "shopping" in line
-    assert "$20.00" in line
-    assert "$124.00" in line
-    assert "budget of $100.00" in line
+    assert "Rs. 20.00" in line
+    assert "Rs. 124.00" in line
+    assert "budget of Rs. 100.00" in line
     assert "OVER BUDGET" in line
-    assert "$24.00" in line  # over by 124 - 100
+    assert "Rs. 24.00" in line  # over by 124 - 100
 
 
 def test_forecast_line_formats_a_historical_average_comparison_without_overspend():
@@ -242,7 +242,7 @@ def test_forecast_line_formats_a_historical_average_comparison_without_overspend
             "on_track_to_overspend": False,
         }
     )
-    assert "historical average of $150.00" in line
+    assert "historical average of Rs. 150.00" in line
     assert "OVER BUDGET" not in line
     assert "ABOVE YOUR TYPICAL SPENDING" not in line
 

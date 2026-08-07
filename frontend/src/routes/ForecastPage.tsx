@@ -236,14 +236,14 @@ export default function ForecastPage() {
                         <tr key={entry.category} className="border-b border-border last:border-0">
                           <td className="px-5 py-3 text-ink capitalize">{entry.category}</td>
                           <td className="px-5 py-3 tabular-figures text-ink">
-                            ${entry.spent_so_far.toFixed(2)}
+                            Rs. {entry.spent_so_far.toFixed(2)}
                           </td>
                           <td
                             className={`px-5 py-3 tabular-figures font-medium ${
                               entry.on_track_to_overspend ? 'text-danger' : 'text-ink'
                             }`}
                           >
-                            ${entry.projected_total.toFixed(2)}
+                            Rs. {entry.projected_total.toFixed(2)}
                           </td>
                           <td className="px-5 py-3 tabular-figures text-ink-muted">
                             {entry.comparison_type === 'budget' && entry.category_id !== null ? (
@@ -252,7 +252,7 @@ export default function ForecastPage() {
                                 onSubmit={(e) => handleUpdateBudget(e, entry.category_id as number)}
                                 className="flex items-center gap-1.5"
                               >
-                                <span>$</span>
+                                <span>Rs.</span>
                                 <input
                                   name="limit"
                                   type="number"
@@ -281,7 +281,7 @@ export default function ForecastPage() {
                               </form>
                             ) : (
                               <>
-                                {baseline !== null ? `$${baseline.toFixed(2)}` : '—'}
+                                {baseline !== null ? `Rs. ${baseline.toFixed(2)}` : '—'}
                                 <div className="text-xs italic text-ink-muted/70 mt-0.5">
                                   {comparisonLabel(entry)}
                                 </div>

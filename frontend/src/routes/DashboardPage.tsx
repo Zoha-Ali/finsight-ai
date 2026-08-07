@@ -270,7 +270,7 @@ export default function DashboardPage() {
               <dt className="text-ink-muted">Amount</dt>
               <dd className="tabular-figures text-ink">
                 {receiptTransactions[0].amount !== null
-                  ? `$${receiptTransactions[0].amount.toFixed(2)}`
+                  ? `Rs. ${receiptTransactions[0].amount.toFixed(2)}`
                   : '—'}
               </dd>
               <dt className="text-ink-muted">Date</dt>
@@ -311,7 +311,7 @@ export default function DashboardPage() {
                     <tr key={tx.transaction_id} className="border-b border-border last:border-0">
                       <td className="px-4 py-2 text-ink">{tx.merchant}</td>
                       <td className="px-4 py-2 tabular-figures text-ink">
-                        {tx.amount !== null ? `$${tx.amount.toFixed(2)}` : '—'}
+                        {tx.amount !== null ? `Rs. ${tx.amount.toFixed(2)}` : '—'}
                       </td>
                       <td className="px-4 py-2 text-ink-muted">{tx.date ?? '—'}</td>
                       <td className="px-4 py-2 text-ink-muted capitalize">{tx.category}</td>
@@ -366,7 +366,7 @@ export default function DashboardPage() {
                 {transactions.map((tx) => (
                   <tr key={tx.id} className="border-b border-border last:border-0">
                     <td className="px-5 py-3 text-ink">{tx.merchant}</td>
-                    <td className="px-5 py-3 tabular-figures text-ink">${tx.amount.toFixed(2)}</td>
+                    <td className="px-5 py-3 tabular-figures text-ink">Rs. {tx.amount.toFixed(2)}</td>
                     <td className="px-5 py-3 text-ink-muted">
                       {tx.date}
                       {tx.date_estimated && (
