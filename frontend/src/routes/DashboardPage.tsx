@@ -25,6 +25,7 @@ export default function DashboardPage() {
   const [date, setDate] = useState(todayIso())
   const [submitting, setSubmitting] = useState(false)
   const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [approvingId, setApprovingId] = useState<number | null>(null)
 
   const receiptFileInputRef = useRef<HTMLInputElement>(null)
   const [receiptFile, setReceiptFile] = useState<File | null>(null)
@@ -87,6 +88,20 @@ export default function DashboardPage() {
       setError(getErrorMessage(err, 'Could not delete that transaction.'))
     } finally {
       setDeletingId(null)
+    }
+  }
+
+  async function handleApprove(id: number) {
+    setError(null)
+    setApprovingId(id)
+
+    try {
+      await api.patch(`/transactions/${id}/approve`)
+      await loadTransactions()
+    } catch (err) {
+      setError(getErrorMessage(err, 'Could not approve that transaction.'))
+    } finally {
+      setApprovingId(null)
     }
   }
 
@@ -391,7 +406,17 @@ export default function DashboardPage() {
                         <span className="text-ink-muted text-xs">Normal</span>
                       )}
                     </td>
-                    <td className="px-5 py-3 text-right">
+                    <td className="px-5 py-3 text-right whitespace-nowrap">
+                      {tx.is_anomaly && (
+                        <button
+                          type="button"
+                          onClick={() => handleApprove(tx.id)}
+                          disabled={approvingId === tx.id}
+                          className="text-xs font-medium text-primary hover:text-primary-hover disabled:opacity-60 transition-colors mr-3"
+                        >
+                          {approvingId === tx.id ? 'Approving…' : 'Approve'}
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => handleDelete(tx.id)}

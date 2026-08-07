@@ -72,6 +72,58 @@ async def list_transactions(
     return [_to_transaction_out(transaction, category_name) for transaction, category_name in result.all()]
 
 
+@router.patch("/{transaction_id}/approve", response_model=TransactionOut)
+async def approve_transaction(
+    transaction_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TransactionOut:
+    """Dismiss a flagged anomaly: mark the transaction as reviewed/normal
+    without deleting it.
+
+    Scoped by owner_id in the same SELECT (not a separate ownership check
+    after fetching) so a transaction_id belonging to another user 404s
+    exactly like a nonexistent one - it doesn't leak whether the ID exists.
+    The linked Anomaly row is deleted outright rather than flagged
+    "resolved": this mirrors delete_transaction's own cleanup (which
+    already deletes any Anomaly row for a removed transaction) and matches
+    how anomalies are treated everywhere else in this codebase - purely as
+    a live flag on the transaction, not as an audit trail. Anomaly has no
+    "resolved" field or history-keeping precedent to extend, so adding one
+    here would be a new pattern rather than a consistent one.
+    """
+    transaction = (
+        await db.execute(
+            select(Transaction).where(
+                Transaction.id == transaction_id,
+                Transaction.owner_id == current_user.id,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if transaction is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
+
+    if not transaction.is_anomaly:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Transaction is not flagged as an anomaly",
+        )
+
+    transaction.is_anomaly = False
+    await db.execute(delete(Anomaly).where(Anomaly.transaction_id == transaction_id))
+    await db.commit()
+    await db.refresh(transaction)
+
+    category_name = None
+    if transaction.category_id is not None:
+        category_name = (
+            await db.execute(select(Category.name).where(Category.id == transaction.category_id))
+        ).scalar_one_or_none()
+
+    return _to_transaction_out(transaction, category_name)
+
+
 @router.delete("/{transaction_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_transaction(
     transaction_id: int,

@@ -133,3 +133,101 @@ async def test_delete_transaction_returns_403_for_another_users_transaction(
 
     response = await client.delete(f"/transactions/{transaction_id}", headers=auth_headers)
     assert response.status_code == 403
+
+
+async def _create_flagged_anomaly(client, db_session, auth_headers, test_user, monkeypatch):
+    """Creates a transaction and flags it as an anomaly directly in the DB
+    (bypassing the real categorization LLM call, same as the other tests
+    in this file), returning its id.
+    """
+    from app.models import Anomaly
+
+    monkeypatch.setattr(transactions_route, "categorize_transaction", AsyncMock(return_value=None))
+
+    create_response = await client.post(
+        "/transactions",
+        json={"merchant": "Suspiciously Large Purchase", "amount": 999.0, "date": "2026-03-01"},
+        headers=auth_headers,
+    )
+    transaction_id = create_response.json()["id"]
+
+    from sqlalchemy import select
+
+    from app.models import Transaction
+
+    transaction = (
+        await db_session.execute(select(Transaction).where(Transaction.id == transaction_id))
+    ).scalar_one()
+    transaction.is_anomaly = True
+    db_session.add(Anomaly(owner_id=test_user.id, transaction_id=transaction_id, reason="Way above average."))
+    await db_session.commit()
+
+    return transaction_id
+
+
+async def test_approve_transaction_clears_the_anomaly_flag_and_deletes_the_anomaly_row(
+    monkeypatch, client, db_session, auth_headers, test_user
+):
+    from sqlalchemy import select
+
+    from app.models import Anomaly
+
+    transaction_id = await _create_flagged_anomaly(client, db_session, auth_headers, test_user, monkeypatch)
+
+    response = await client.patch(f"/transactions/{transaction_id}/approve", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["is_anomaly"] is False
+
+    remaining_anomaly = (
+        await db_session.execute(select(Anomaly).where(Anomaly.transaction_id == transaction_id))
+    ).scalar_one_or_none()
+    assert remaining_anomaly is None
+
+    list_response = await client.get("/transactions", headers=auth_headers)
+    listed = next(t for t in list_response.json() if t["id"] == transaction_id)
+    assert listed["is_anomaly"] is False
+
+
+async def test_approve_transaction_returns_404_for_a_nonexistent_transaction(client, auth_headers):
+    response = await client.patch("/transactions/999999999/approve", headers=auth_headers)
+    assert response.status_code == 404
+
+
+async def test_approve_transaction_returns_404_for_another_users_transaction(
+    monkeypatch, client, db_session, auth_headers, test_user
+):
+    from app.auth import create_access_token, hash_password
+    from app.models import User
+
+    other_user = User(
+        username=_unique("other_user"),
+        email=f"{_unique('other_user')}@example.com",
+        hashed_password=hash_password("x"),
+    )
+    db_session.add(other_user)
+    await db_session.commit()
+    await db_session.refresh(other_user)
+    other_headers = {"Authorization": f"Bearer {create_access_token(other_user.id)}"}
+
+    transaction_id = await _create_flagged_anomaly(client, db_session, other_headers, other_user, monkeypatch)
+
+    # A transaction that exists but belongs to someone else 404s exactly
+    # like a nonexistent one - it must not leak whether the id exists via
+    # a 403 instead.
+    response = await client.patch(f"/transactions/{transaction_id}/approve", headers=auth_headers)
+    assert response.status_code == 404
+
+
+async def test_approve_transaction_returns_400_when_not_flagged_as_anomaly(monkeypatch, client, auth_headers):
+    monkeypatch.setattr(transactions_route, "categorize_transaction", AsyncMock(return_value=None))
+
+    create_response = await client.post(
+        "/transactions",
+        json={"merchant": "Ordinary Purchase", "amount": 5.0, "date": "2026-03-01"},
+        headers=auth_headers,
+    )
+    transaction_id = create_response.json()["id"]
+
+    response = await client.patch(f"/transactions/{transaction_id}/approve", headers=auth_headers)
+    assert response.status_code == 400
