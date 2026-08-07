@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { api, getErrorMessage } from '@/lib/api'
+import { modelLabel } from '@/lib/modelLabels'
 import type { CompareModelsResponse, ModelCompareResult, QAResponse } from '@/types'
 
 interface ChatEntry {
@@ -7,11 +8,7 @@ interface ChatEntry {
   answer: string | null
   table: Record<string, unknown>[] | null
   compare: CompareModelsResponse | null
-}
-
-const MODEL_LABELS: Record<string, string> = {
-  'claude-sonnet-5': 'Claude Sonnet 5',
-  'llama-3.3-70b-versatile': 'Llama 3.3 70B (Groq)',
+  modelUsed: string | null
 }
 
 // POST /qa is routed through the supervisor, which can dispatch to the qa,
@@ -35,7 +32,7 @@ function ModelAnswerCard({ result }: { result: ModelCompareResult }) {
   return (
     <div className="bg-surface-card border border-border rounded-lg px-4 py-3 space-y-2">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-primary">{MODEL_LABELS[result.model] ?? result.model}</span>
+        <span className="text-xs font-semibold text-primary">{modelLabel(result.model)}</span>
         <span className="text-xs text-ink-muted tabular-figures">{result.elapsed_seconds.toFixed(2)}s</span>
       </div>
       <p className="text-sm text-ink">{result.answer}</p>
@@ -91,12 +88,22 @@ export default function ChatPage() {
     try {
       if (compareMode) {
         const response = await api.post<CompareModelsResponse>('/qa/compare', { question: askedQuestion })
-        setHistory((prev) => [...prev, { question: askedQuestion, answer: null, table: null, compare: response.data }])
-      } else {
-        const response = await api.post<QAResponse>('/qa', { question: askedQuestion })
         setHistory((prev) => [
           ...prev,
-          { question: askedQuestion, answer: extractAnswer(response.data), table: response.data.table, compare: null },
+          { question: askedQuestion, answer: null, table: null, compare: response.data, modelUsed: null },
+        ])
+      } else {
+        const response = await api.post<QAResponse>('/qa', { question: askedQuestion })
+        const modelUsed = typeof response.data.result.model_used === 'string' ? response.data.result.model_used : null
+        setHistory((prev) => [
+          ...prev,
+          {
+            question: askedQuestion,
+            answer: extractAnswer(response.data),
+            table: response.data.table,
+            compare: null,
+            modelUsed,
+          },
         ])
       }
     } catch (err) {
@@ -212,6 +219,9 @@ export default function ChatPage() {
                         </tbody>
                       </table>
                     </div>
+                  )}
+                  {entry.modelUsed && (
+                    <p className="text-xs text-ink-muted/70">via {modelLabel(entry.modelUsed)}</p>
                   )}
                 </div>
               </div>

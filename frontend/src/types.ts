@@ -18,6 +18,7 @@ export interface Transaction {
   source: TransactionSource
   is_anomaly: boolean
   is_over_budget: boolean
+  categorized_by_model: string | null
   created_at: string
   owner_id: number
   category_id: number | null
@@ -69,6 +70,7 @@ export interface ForecastEntry {
 export interface ForecastResponse {
   forecasts: ForecastEntry[]
   summary: string
+  summary_model: string | null
 }
 
 export interface Category {
@@ -90,6 +92,7 @@ export interface CategorizeResult {
   is_anomaly: boolean
   reason: string | null
   date_estimated?: boolean | null
+  model_used?: string | null
 }
 
 export type ReceiptDocType = 'receipt' | 'statement'
@@ -98,6 +101,7 @@ export interface ReceiptUploadResponse {
   filename: string | null
   type: ReceiptDocType
   transactions_created: CategorizeResult[]
+  extraction_model: string
 }
 
 export interface ApiError {

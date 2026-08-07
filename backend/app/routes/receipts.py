@@ -47,4 +47,5 @@ async def upload_receipt(
         filename=file.filename,
         type=result["type"],
         transactions_created=result["transactions_created"],
+        extraction_model=result["extraction_model"],
     )

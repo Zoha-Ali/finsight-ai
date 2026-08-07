@@ -58,6 +58,7 @@ class Transaction(Base):
     source = Column(Enum(TransactionSource), nullable=False, default=TransactionSource.manual)
     is_anomaly = Column(Boolean, nullable=False, default=False)
     is_over_budget = Column(Boolean, nullable=False, default=False)
+    categorized_by_model = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)

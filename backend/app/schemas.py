@@ -50,6 +50,7 @@ class TransactionOut(BaseModel):
     source: TransactionSource
     is_anomaly: bool
     is_over_budget: bool
+    categorized_by_model: Optional[str] = None
     created_at: datetime
     owner_id: int
     category_id: Optional[int] = None
@@ -67,12 +68,14 @@ class CategorizeResponse(BaseModel):
     is_anomaly: bool
     reason: Optional[str] = None
     date_estimated: Optional[bool] = None
+    model_used: Optional[str] = None
 
 
 class ReceiptUploadResponse(BaseModel):
     filename: Optional[str] = None
     type: str
     transactions_created: list[CategorizeResponse]
+    extraction_model: str
 
 
 class ForecastEntry(BaseModel):
@@ -89,6 +92,7 @@ class ForecastEntry(BaseModel):
 class ForecastResponse(BaseModel):
     forecasts: list[ForecastEntry]
     summary: str
+    summary_model: Optional[str] = None
 
 
 class QARequest(BaseModel):

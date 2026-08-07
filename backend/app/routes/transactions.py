@@ -21,6 +21,7 @@ def _to_transaction_out(transaction: Transaction, category_name: str | None) -> 
         source=transaction.source,
         is_anomaly=transaction.is_anomaly,
         is_over_budget=transaction.is_over_budget,
+        categorized_by_model=transaction.categorized_by_model,
         created_at=transaction.created_at,
         owner_id=transaction.owner_id,
         category_id=transaction.category_id,

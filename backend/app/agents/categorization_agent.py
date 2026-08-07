@@ -200,6 +200,7 @@ async def categorize_transaction(transaction_id: int, owner_id: int, model: str 
 
         transaction.category_id = category.id
         transaction.is_anomaly = is_anomaly
+        transaction.categorized_by_model = model
 
         if is_anomaly:
             existing_anomaly = await session.execute(
@@ -225,6 +226,7 @@ async def categorize_transaction(transaction_id: int, owner_id: int, model: str 
             "category_id": category.id,
             "is_anomaly": is_anomaly,
             "reason": reason,
+            "model_used": model,
         }
 
     await save_trace(

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, getErrorMessage } from '@/lib/api'
+import { modelLabel } from '@/lib/modelLabels'
 import type { ReceiptDocType, ReceiptUploadResponse, Transaction, TransactionCreate } from '@/types'
 
 const todayIso = () => new Date().toISOString().slice(0, 10)
@@ -31,6 +32,7 @@ export default function DashboardPage() {
   const [receiptFile, setReceiptFile] = useState<File | null>(null)
   const [receiptDocType, setReceiptDocType] = useState<ReceiptDocType | null>(null)
   const [receiptTransactions, setReceiptTransactions] = useState<EnrichedTransaction[]>([])
+  const [receiptExtractionModel, setReceiptExtractionModel] = useState<string | null>(null)
   const [uploadingReceipt, setUploadingReceipt] = useState(false)
   const [receiptError, setReceiptError] = useState<string | null>(null)
 
@@ -136,6 +138,7 @@ export default function DashboardPage() {
     setReceiptError(null)
     setReceiptDocType(null)
     setReceiptTransactions([])
+    setReceiptExtractionModel(null)
     setUploadingReceipt(true)
 
     const formData = new FormData()
@@ -151,6 +154,7 @@ export default function DashboardPage() {
       setTransactions(refreshed.data)
       setReceiptDocType(response.data.type)
       setReceiptTransactions(enrichReceiptResult(response.data, refreshed.data))
+      setReceiptExtractionModel(response.data.extraction_model)
       setReceiptFile(null)
       if (receiptFileInputRef.current) receiptFileInputRef.current.value = ''
     } catch (err) {
@@ -272,7 +276,12 @@ export default function DashboardPage() {
         {receiptDocType === 'receipt' && receiptTransactions.length > 0 && (
           <div className="mt-4 border border-border rounded-lg p-4">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-ink">Receipt processed</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold text-ink">Receipt processed</h3>
+                {receiptExtractionModel && (
+                  <span className="text-xs text-ink-muted/70">via {modelLabel(receiptExtractionModel)}</span>
+                )}
+              </div>
               {receiptTransactions[0].is_anomaly && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-danger-soft text-danger text-xs font-medium px-2 py-0.5">
                   Anomaly
@@ -305,7 +314,12 @@ export default function DashboardPage() {
         {receiptDocType === 'statement' && receiptTransactions.length > 0 && (
           <div className="mt-4 border border-border rounded-lg overflow-hidden">
             <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-ink">Statement processed</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold text-ink">Statement processed</h3>
+                {receiptExtractionModel && (
+                  <span className="text-xs text-ink-muted/70">via {modelLabel(receiptExtractionModel)}</span>
+                )}
+              </div>
               <span className="text-xs text-ink-muted">
                 {receiptTransactions.length} transaction{receiptTransactions.length === 1 ? '' : 's'}
               </span>
@@ -396,6 +410,11 @@ export default function DashboardPage() {
                     <td className="px-5 py-3 text-ink-muted capitalize">{tx.source}</td>
                     <td className="px-5 py-3 text-ink-muted capitalize">
                       {tx.category_name ?? 'Uncategorized'}
+                      {tx.categorized_by_model && (
+                        <div className="text-xs italic text-ink-muted/70 mt-0.5 normal-case">
+                          via {modelLabel(tx.categorized_by_model)}
+                        </div>
+                      )}
                     </td>
                     <td className="px-5 py-3">
                       {tx.is_anomaly ? (

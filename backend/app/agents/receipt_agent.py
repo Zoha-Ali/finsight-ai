@@ -264,7 +264,7 @@ async def process_receipt(file_base64: str, owner_id: int) -> dict:
     doc_type = extracted.get("type")
 
     if doc_type == "not_a_receipt":
-        result = {"type": "not_a_receipt", "transactions_created": []}
+        result = {"type": "not_a_receipt", "transactions_created": [], "extraction_model": MODEL}
         await save_trace(
             owner_id,
             "Process receipt upload",
@@ -313,7 +313,7 @@ async def process_receipt(file_base64: str, owner_id: int) -> dict:
     for entry in transactions_created:
         entry["date_estimated"] = date_estimated_by_id.get(entry["transaction_id"], False)
 
-    result = {"type": doc_type, "transactions_created": transactions_created}
+    result = {"type": doc_type, "transactions_created": transactions_created, "extraction_model": MODEL}
 
     await save_trace(
         owner_id,

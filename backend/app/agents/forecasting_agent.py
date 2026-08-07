@@ -211,18 +211,22 @@ async def generate_forecast(owner_id: int) -> dict:
             }
         )
 
+    summary_model = None
     if not forecasts:
         summary = "No spending recorded yet this month."
     else:
         try:
             summary = await _summarize(forecasts)
+            summary_model = MODEL
         except (httpx.HTTPError, RuntimeError):
             # The numbers above are already fully computed - don't let a
             # network error or rate limit on the summary call take the
-            # whole forecast down with it.
+            # whole forecast down with it. summary_model stays None here:
+            # the fallback sentence is deterministic Python, not something
+            # any model actually produced.
             summary = _fallback_summary(forecasts)
 
-    result = {"forecasts": forecasts, "summary": summary}
+    result = {"forecasts": forecasts, "summary": summary, "summary_model": summary_model}
 
     await save_trace(
         owner_id,
