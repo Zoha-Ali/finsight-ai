@@ -102,6 +102,33 @@ async def get_budget(owner_id: int, category_id: int) -> Optional[dict]:
 
 
 @mcp.tool()
+async def get_all_budgets(owner_id: int) -> list[dict]:
+    """Return every budget a user has set, one per category.
+
+    Unlike get_monthly_summary (which only lists categories with at least
+    one transaction this month), this returns budgeted categories
+    regardless of whether there's been any spending in them yet - use this
+    alongside get_monthly_summary when a category needs to show up even
+    at zero spend, e.g. forecasting a freshly-budgeted category.
+    """
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Budget, Category.name)
+            .join(Category, Budget.category_id == Category.id)
+            .where(Budget.owner_id == owner_id)
+            .order_by(Category.name)
+        )
+        return [
+            {
+                "category_id": budget.category_id,
+                "category_name": category_name,
+                "monthly_limit": budget.monthly_limit,
+            }
+            for budget, category_name in result.all()
+        ]
+
+
+@mcp.tool()
 async def get_monthly_summary(owner_id: int, month: int, year: int) -> list[dict]:
     """Return a user's total spending grouped by category for one month.
 

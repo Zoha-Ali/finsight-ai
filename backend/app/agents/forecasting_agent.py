@@ -6,7 +6,7 @@ from datetime import date
 import httpx
 from dotenv import load_dotenv
 
-from ..mcp_server import get_budget, get_historical_monthly_average, get_monthly_summary
+from ..mcp_server import get_all_budgets, get_budget, get_historical_monthly_average, get_monthly_summary
 from .tracing import save_trace
 
 load_dotenv()
@@ -135,12 +135,28 @@ async def generate_forecast(owner_id: int) -> dict:
     is flagged against whichever baseline applies. claude-haiku-4-5 then
     phrases the results as a short summary - the model never does the math
     itself.
+
+    The category list is the union of get_monthly_summary (categories with
+    at least one transaction this month) and get_all_budgets (every
+    budgeted category, regardless of spending) - get_monthly_summary alone
+    would silently omit a category the user just set a budget for but
+    hasn't spent in yet this month, even though it has a real budget worth
+    showing progress against (spent_so_far=0, never flagged as over
+    budget).
     """
     today = date.today()
     days_elapsed = today.day
     days_in_month = calendar.monthrange(today.year, today.month)[1]
 
     summary_rows = await get_monthly_summary(owner_id=owner_id, month=today.month, year=today.year)
+
+    all_budgets = await get_all_budgets(owner_id=owner_id)
+    spent_category_ids = {row["category_id"] for row in summary_rows}
+    summary_rows = summary_rows + [
+        {"category_id": b["category_id"], "category_name": b["category_name"], "total_spent": 0.0}
+        for b in all_budgets
+        if b["category_id"] not in spent_category_ids
+    ]
 
     # Each category's budget/historical-average lookup is an independent DB
     # round trip with no dependency on any other category, so run them

@@ -1,3 +1,4 @@
+import uuid
 from datetime import date as real_date
 from unittest.mock import AsyncMock
 
@@ -5,6 +6,10 @@ import httpx
 import pytest
 
 from app.agents import forecasting_agent
+
+
+def _unique(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:8]}"
 
 
 class _FixedDate:
@@ -24,9 +29,13 @@ class _FixedDate:
 def no_real_calls(monkeypatch):
     """generate_forecast() writes a Trace row via save_trace() as a side
     effect unrelated to the math being tested here - mock it out so these
-    tests never touch a real DB session.
+    tests never touch a real DB session. get_all_budgets defaults to no
+    other budgets so existing tests (written before it existed) don't need
+    to know about it - only tests that specifically exercise the
+    zero-spend-budgeted-category union override this.
     """
     monkeypatch.setattr(forecasting_agent, "save_trace", AsyncMock(return_value=None))
+    monkeypatch.setattr(forecasting_agent, "get_all_budgets", AsyncMock(return_value=[]))
 
 
 def _set_today(monkeypatch, year: int, month: int, day: int) -> real_date:
@@ -208,6 +217,142 @@ async def test_uncategorized_spending_is_reported_as_no_data_without_a_budget_lo
     assert forecast["category"] == "uncategorized"
     assert forecast["comparison_type"] == "no_data"
     get_budget_mock.assert_not_awaited()  # no category_id to look a budget up for
+
+
+# --- Zero-spend budgeted categories (union of get_monthly_summary and ----
+# --- get_all_budgets) -------------------------------------------------------
+
+
+async def test_budgeted_category_with_zero_spending_appears_in_the_forecast(monkeypatch):
+    _set_today(monkeypatch, 2026, 3, 5)
+
+    monkeypatch.setattr(forecasting_agent, "get_monthly_summary", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        forecasting_agent,
+        "get_all_budgets",
+        AsyncMock(return_value=[{"category_id": 7, "category_name": "bills", "monthly_limit": 500.0}]),
+    )
+    monkeypatch.setattr(
+        forecasting_agent, "get_budget", AsyncMock(return_value={"monthly_limit": 500.0, "category_id": 7})
+    )
+    monkeypatch.setattr(forecasting_agent, "get_historical_monthly_average", AsyncMock(return_value=None))
+    summarize_mock = AsyncMock(return_value="mock summary")
+    monkeypatch.setattr(forecasting_agent, "_summarize", summarize_mock)
+
+    result = await forecasting_agent.generate_forecast(owner_id=1)
+
+    assert len(result["forecasts"]) == 1
+    forecast = result["forecasts"][0]
+    assert forecast["category"] == "bills"
+    assert forecast["category_id"] == 7
+    assert forecast["spent_so_far"] == 0.0
+    assert forecast["projected_total"] == 0.0
+    assert forecast["comparison_type"] == "budget"
+    assert forecast["budget_limit"] == 500.0
+    # zero spent must never be flagged as over budget, however low the limit
+    assert forecast["on_track_to_overspend"] is False
+    # a real, non-empty forecast (even at zero spend) still gets a real
+    # summary call - it must not take the "no spending at all" shortcut
+    # that skips the LLM entirely.
+    summarize_mock.assert_awaited_once()
+    assert result["summary"] != "No spending recorded yet this month."
+
+
+async def test_multiple_zero_spend_budgeted_categories_all_appear(monkeypatch):
+    _set_today(monkeypatch, 2026, 3, 5)
+
+    monkeypatch.setattr(forecasting_agent, "get_monthly_summary", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        forecasting_agent,
+        "get_all_budgets",
+        AsyncMock(
+            return_value=[
+                {"category_id": 7, "category_name": "bills", "monthly_limit": 500.0},
+                {"category_id": 8, "category_name": "health", "monthly_limit": 200.0},
+            ]
+        ),
+    )
+    budgets_by_category = {7: {"monthly_limit": 500.0, "category_id": 7}, 8: {"monthly_limit": 200.0, "category_id": 8}}
+
+    async def fake_get_budget(owner_id, category_id):
+        return budgets_by_category.get(category_id)
+
+    monkeypatch.setattr(forecasting_agent, "get_budget", fake_get_budget)
+    monkeypatch.setattr(forecasting_agent, "get_historical_monthly_average", AsyncMock(return_value=None))
+    monkeypatch.setattr(forecasting_agent, "_summarize", AsyncMock(return_value="mock summary"))
+
+    result = await forecasting_agent.generate_forecast(owner_id=1)
+
+    by_category = {f["category"]: f for f in result["forecasts"]}
+    assert set(by_category.keys()) == {"bills", "health"}
+    assert by_category["bills"]["spent_so_far"] == 0.0
+    assert by_category["health"]["spent_so_far"] == 0.0
+
+
+async def test_budgeted_category_with_existing_spending_is_not_duplicated(monkeypatch):
+    _set_today(monkeypatch, 2026, 3, 5)
+
+    monkeypatch.setattr(
+        forecasting_agent,
+        "get_monthly_summary",
+        AsyncMock(return_value=[{"category_id": 1, "category_name": "food", "total_spent": 40.0}]),
+    )
+    # get_all_budgets also lists category 1 - it already has spending this
+    # month via get_monthly_summary, so it must not appear a second time
+    # as a synthetic zero-spend row.
+    monkeypatch.setattr(
+        forecasting_agent,
+        "get_all_budgets",
+        AsyncMock(return_value=[{"category_id": 1, "category_name": "food", "monthly_limit": 200.0}]),
+    )
+    monkeypatch.setattr(
+        forecasting_agent, "get_budget", AsyncMock(return_value={"monthly_limit": 200.0, "category_id": 1})
+    )
+    monkeypatch.setattr(forecasting_agent, "get_historical_monthly_average", AsyncMock(return_value=None))
+    monkeypatch.setattr(forecasting_agent, "_summarize", AsyncMock(return_value="mock summary"))
+
+    result = await forecasting_agent.generate_forecast(owner_id=1)
+
+    assert len(result["forecasts"]) == 1
+    assert result["forecasts"][0]["spent_so_far"] == 40.0  # the real spend, not overwritten with 0
+
+
+async def test_generate_forecast_real_db_shows_a_freshly_budgeted_zero_spend_category(
+    monkeypatch, db_session, test_user
+):
+    """End-to-end regression check against a real DB (not mocked
+    get_monthly_summary/get_all_budgets/get_budget): a Budget row with no
+    matching transactions this month must still surface in the forecast,
+    exactly as it would for a real user who just set a budget for a
+    category they haven't spent in yet.
+    """
+    from app import mcp_server as mcp_server_module
+    from app.models import Budget, Category
+
+    monkeypatch.setattr(forecasting_agent, "get_all_budgets", mcp_server_module.get_all_budgets)
+    monkeypatch.setattr(forecasting_agent, "get_monthly_summary", mcp_server_module.get_monthly_summary)
+    monkeypatch.setattr(forecasting_agent, "get_budget", mcp_server_module.get_budget)
+    monkeypatch.setattr(forecasting_agent, "get_historical_monthly_average", AsyncMock(return_value=None))
+    monkeypatch.setattr(forecasting_agent, "_summarize", AsyncMock(return_value="mock summary"))
+
+    category = Category(name=_unique("bills"))
+    db_session.add(category)
+    await db_session.commit()
+    await db_session.refresh(category)
+
+    db_session.add(Budget(owner_id=test_user.id, category_id=category.id, monthly_limit=500.0))
+    await db_session.commit()
+
+    result = await forecasting_agent.generate_forecast(owner_id=test_user.id)
+
+    matching = [f for f in result["forecasts"] if f["category_id"] == category.id]
+    assert len(matching) == 1
+    forecast = matching[0]
+    assert forecast["spent_so_far"] == 0.0
+    assert forecast["projected_total"] == 0.0
+    assert forecast["comparison_type"] == "budget"
+    assert forecast["budget_limit"] == 500.0
+    assert forecast["on_track_to_overspend"] is False
 
 
 def test_forecast_line_formats_a_budget_comparison_and_overspend_flag():
