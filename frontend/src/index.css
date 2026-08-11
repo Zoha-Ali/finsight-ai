@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-ink: #16202b;
+  --color-ink-muted: #5b6472;
+  --color-surface: #f6f7f9;
+  --color-surface-card: #ffffff;
+  --color-border: #e2e5ea;
+  --color-primary: #1d3557;
+  --color-primary-hover: #14263f;
+  --color-accent: #1b7a5b;
+  --color-danger: #b42318;
+  --color-danger-soft: #fbeae8;
+  --color-warning: #b7791f;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+}
+
+/* Tabular figures for anything showing money - keeps digit columns aligned */
+.tabular-figures {
+  font-variant-numeric: tabular-nums;
+}

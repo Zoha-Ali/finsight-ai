@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+sqlalchemy
+pydantic
+python-dotenv
+alembic
+asyncpg
+bcrypt
+PyJWT
+mcp
+httpx
+
+pytest
+pytest-asyncio
+pytest-cov
