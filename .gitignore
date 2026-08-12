@@ -17,6 +17,10 @@ htmlcov/
 *.db
 *.sqlite3
 
+# Ad-hoc/throwaway debug scripts - write directly to the real DB with no
+# transaction rollback safety, unlike backend/tests/. Never committed.
+backend/scripts/scratch/
+
 # Node / Frontend
 node_modules/
 dist/
