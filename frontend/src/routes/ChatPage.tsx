@@ -35,6 +35,9 @@ function ModelAnswerCard({ result }: { result: ModelCompareResult }) {
         <span className="text-xs font-semibold text-primary">{modelLabel(result.model)}</span>
         <span className="text-xs text-ink-muted tabular-figures">{result.elapsed_seconds.toFixed(2)}s</span>
       </div>
+      {result.recovery_path === 'sonnet_fallback' && (
+        <p className="text-xs font-medium text-danger">⚠️ Llama failed, showing Sonnet instead</p>
+      )}
       <p className="text-sm text-ink">{result.answer}</p>
       {result.table && result.table.length > 0 && (
         <div className="overflow-x-auto border border-border rounded-md">

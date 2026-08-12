@@ -46,6 +46,7 @@ export interface ModelCompareResult {
   table: Record<string, unknown>[] | null
   tools_used: string[]
   elapsed_seconds: number
+  recovery_path: string | null
 }
 
 export interface CompareModelsResponse {

@@ -113,6 +113,7 @@ class ModelCompareResult(BaseModel):
     table: Optional[list[dict]] = None
     tools_used: list[str]
     elapsed_seconds: float
+    recovery_path: Optional[str] = None
 
 
 class CompareModelsResponse(BaseModel):
