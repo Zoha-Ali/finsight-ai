@@ -24,6 +24,13 @@ allow_origins = (
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
+    # Vercel gives every deploy its own URL - the production domain plus a
+    # fresh, randomly-hashed one per preview deployment - so a static list
+    # can't keep up. Regex-matching any *.vercel.app origin (in addition to
+    # the explicit allow_origins above) covers all of them, current and
+    # future, without needing a code change or Railway env var update per
+    # deploy.
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
