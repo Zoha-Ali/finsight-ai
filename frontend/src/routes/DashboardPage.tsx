@@ -33,6 +33,7 @@ export default function DashboardPage() {
   const [receiptDocType, setReceiptDocType] = useState<ReceiptDocType | null>(null)
   const [receiptTransactions, setReceiptTransactions] = useState<EnrichedTransaction[]>([])
   const [receiptExtractionModel, setReceiptExtractionModel] = useState<string | null>(null)
+  const [receiptSummary, setReceiptSummary] = useState<string | null>(null)
   const [uploadingReceipt, setUploadingReceipt] = useState(false)
   const [receiptError, setReceiptError] = useState<string | null>(null)
 
@@ -139,6 +140,7 @@ export default function DashboardPage() {
     setReceiptDocType(null)
     setReceiptTransactions([])
     setReceiptExtractionModel(null)
+    setReceiptSummary(null)
     setUploadingReceipt(true)
 
     const formData = new FormData()
@@ -155,6 +157,7 @@ export default function DashboardPage() {
       setReceiptDocType(response.data.type)
       setReceiptTransactions(enrichReceiptResult(response.data, refreshed.data))
       setReceiptExtractionModel(response.data.extraction_model)
+      setReceiptSummary(response.data.summary)
       setReceiptFile(null)
       if (receiptFileInputRef.current) receiptFileInputRef.current.value = ''
     } catch (err) {
@@ -270,6 +273,12 @@ export default function DashboardPage() {
         {receiptError && (
           <p className="mt-4 text-sm text-danger bg-danger-soft border border-danger/20 rounded-md px-3 py-2">
             {receiptError}
+          </p>
+        )}
+
+        {receiptSummary && (
+          <p className="mt-4 text-sm text-ink bg-surface border border-border rounded-md px-3 py-2">
+            {receiptSummary}
           </p>
         )}
 

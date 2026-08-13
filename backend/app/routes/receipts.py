@@ -48,4 +48,6 @@ async def upload_receipt(
         type=result["type"],
         transactions_created=result["transactions_created"],
         extraction_model=result["extraction_model"],
+        skipped=result["skipped"],
+        summary=result["summary"],
     )

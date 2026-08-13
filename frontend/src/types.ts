@@ -98,11 +98,19 @@ export interface CategorizeResult {
 
 export type ReceiptDocType = 'receipt' | 'statement'
 
+export interface SkippedTransaction {
+  merchant: string | null
+  amount: number | null
+  reason: string
+}
+
 export interface ReceiptUploadResponse {
   filename: string | null
   type: ReceiptDocType
   transactions_created: CategorizeResult[]
   extraction_model: string
+  skipped: SkippedTransaction[]
+  summary: string
 }
 
 export interface ApiError {

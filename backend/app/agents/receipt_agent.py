@@ -59,11 +59,26 @@ EXTRACTION_SYSTEM_PROMPT = (
     "Respond with ONLY a single raw JSON object - no markdown code fences, "
     "no commentary - matching exactly this schema:\n"
     '{"type": "receipt" | "statement" | "not_a_receipt", "transactions": '
-    '[{"merchant": string, "amount": number, "date": "YYYY-MM-DD" | null}]}\n\n'
+    '[{"merchant": string, "amount": number, "date": "YYYY-MM-DD" | null, '
+    '"type": "debit" | "credit"}]}\n\n'
     'For a single receipt, "transactions" has exactly one item. For a '
     "statement, include one item per line-item transaction across all "
     "pages - don't omit a transaction just because one field is hard to "
     "read.\n\n"
+    'Every transaction also needs a per-item "type" (separate from the '
+    'top-level "type" above): "debit" if money left the account (a '
+    "purchase, bill payment, withdrawal, or outgoing/sent transfer), or "
+    '"credit" if money entered the account (a deposit, incoming '
+    "transfer, refund, interest, or profit-share payment). Get this "
+    "right even when other fields are uncertain - when a statement has "
+    "separate Debit/Withdrawal and Credit/Deposit columns, use whichever "
+    "column the row's amount actually appears in; when it's a single "
+    "signed amount column, a negative value is normally a debit and a "
+    "positive value a credit, but also read the row's own label or "
+    "description rather than relying on the sign alone. Regardless of "
+    'debit or credit, "amount" itself must always be the positive '
+    "magnitude of the transaction - never a negative number. Direction "
+    'is expressed only through the "type" field.\n\n'
     'For the "date" field specifically: only return a date you can '
     "actually read in the file. If no date is visible, or it's too "
     "blurry, cut off, or ambiguous to read with confidence, return null. "
@@ -252,11 +267,20 @@ async def process_receipt(file_base64: str, owner_id: int) -> dict:
 
     Uses claude-sonnet-5 to classify the file as a single receipt or a
     multi-line statement and extract each transaction (merchant, amount,
-    date) as strict JSON. Each extracted transaction is inserted directly
-    (source="receipt") - bypassing the MCP record_transaction tool, since
-    that tool hardcodes source="manual" and today's date, neither of which
-    fit receipt-extracted data - then run through categorize_transaction
-    for categorization and anomaly detection.
+    date, debit/credit direction) as strict JSON. Only debit (expense)
+    transactions are recorded - this app tracks spending, not income, so
+    credit/deposit transactions are deliberately skipped rather than
+    inserted. Every skip (a deposit, a missing merchant, an unusable
+    amount, or an unrecognized type) is recorded with its reason, and the
+    complete unfiltered extraction output is saved to the Trace row
+    alongside it - so a bug in this filtering (or in the model's
+    extraction itself) is debuggable straight from the Trace table,
+    without needing the original file re-uploaded. Each recorded
+    transaction is inserted directly (source="receipt") - bypassing the
+    MCP record_transaction tool, since that tool hardcodes source="manual"
+    and today's date, neither of which fit receipt-extracted data - then
+    run through categorize_transaction for categorization and anomaly
+    detection.
     """
     media_type, data = _split_data_uri(file_base64)
     extracted = await _extract(media_type, data)
@@ -264,12 +288,25 @@ async def process_receipt(file_base64: str, owner_id: int) -> dict:
     doc_type = extracted.get("type")
 
     if doc_type == "not_a_receipt":
-        result = {"type": "not_a_receipt", "transactions_created": [], "extraction_model": MODEL}
+        result = {
+            "type": "not_a_receipt",
+            "transactions_created": [],
+            "extraction_model": MODEL,
+            "skipped": [],
+            "summary": "",
+        }
         await save_trace(
             owner_id,
             "Process receipt upload",
             "receipt",
-            [{"agent": "receipt_agent", "action": "process_receipt", "result": result}],
+            [
+                {
+                    "agent": "receipt_agent",
+                    "action": "process_receipt",
+                    "raw_extraction": extracted,
+                    "result": result,
+                }
+            ],
         )
         return result
 
@@ -282,11 +319,35 @@ async def process_receipt(file_base64: str, owner_id: int) -> dict:
 
     created_ids = []
     date_estimated_by_id: dict[int, bool] = {}
+    skipped: list[dict] = []
+
     async with AsyncSessionLocal() as session:
         for item in raw_transactions:
             merchant = _clean_merchant(item.get("merchant"))
             amount = item.get("amount")
-            if merchant is None or not _is_valid_amount(amount):
+            raw_type = item.get("type")
+            tx_type = raw_type.strip().lower() if isinstance(raw_type, str) else None
+
+            # Direction is checked first and independently of data quality -
+            # a deposit is out of scope regardless of whether its merchant
+            # or amount also happen to be usable, and this is the reason
+            # the user actually cares about (why wasn't this tracked?),
+            # not an extraction-quality detail.
+            if tx_type == "credit":
+                skipped.append({"merchant": merchant, "amount": amount, "reason": "deposit, out of scope"})
+                continue
+            if tx_type != "debit":
+                # Missing/unrecognized type - deliberately NOT defaulted to
+                # debit. Silently assuming a direction we don't actually
+                # know is exactly the kind of accidental inclusion this
+                # fix exists to prevent; skip and surface it instead.
+                skipped.append({"merchant": merchant, "amount": amount, "reason": "unrecognized transaction type"})
+                continue
+            if merchant is None:
+                skipped.append({"merchant": merchant, "amount": amount, "reason": "missing merchant"})
+                continue
+            if not _is_valid_amount(amount):
+                skipped.append({"merchant": merchant, "amount": amount, "reason": "invalid amount"})
                 continue
 
             tx_date, date_estimated = _parse_date(item.get("date"))
@@ -306,20 +367,50 @@ async def process_receipt(file_base64: str, owner_id: int) -> dict:
 
         await session.commit()
 
-    if not created_ids:
+    deposit_skips = [s for s in skipped if s["reason"] == "deposit, out of scope"]
+    other_skips = [s for s in skipped if s["reason"] != "deposit, out of scope"]
+
+    if not created_ids and not deposit_skips:
+        # Every extracted item failed for a data-quality reason (not a
+        # legitimate, intentional deposit-skip) - nothing usable came out
+        # of this file at all.
         raise ValueError("Extracted transactions were all missing a merchant or amount")
 
     transactions_created = [await categorize_transaction(tx_id, owner_id) for tx_id in created_ids]
     for entry in transactions_created:
         entry["date_estimated"] = date_estimated_by_id.get(entry["transaction_id"], False)
 
-    result = {"type": doc_type, "transactions_created": transactions_created, "extraction_model": MODEL}
+    total_found = len(raw_transactions)
+    summary = (
+        f"{total_found} transaction{'' if total_found == 1 else 's'} found, "
+        f"{len(created_ids)} expense{'' if len(created_ids) == 1 else 's'} added"
+    )
+    if deposit_skips:
+        summary += f", {len(deposit_skips)} deposit{'' if len(deposit_skips) == 1 else 's'} skipped (not tracked)"
+    if other_skips:
+        summary += f", {len(other_skips)} item{'' if len(other_skips) == 1 else 's'} skipped (unreadable data)"
+    summary += "."
+
+    result = {
+        "type": doc_type,
+        "transactions_created": transactions_created,
+        "extraction_model": MODEL,
+        "skipped": skipped,
+        "summary": summary,
+    }
 
     await save_trace(
         owner_id,
         "Process receipt upload",
         "receipt",
-        [{"agent": "receipt_agent", "action": "process_receipt", "result": result}],
+        [
+            {
+                "agent": "receipt_agent",
+                "action": "process_receipt",
+                "raw_extraction": extracted,
+                "result": result,
+            }
+        ],
     )
 
     return result

@@ -71,11 +71,19 @@ class CategorizeResponse(BaseModel):
     model_used: Optional[str] = None
 
 
+class SkippedTransaction(BaseModel):
+    merchant: Optional[str] = None
+    amount: Optional[float] = None
+    reason: str
+
+
 class ReceiptUploadResponse(BaseModel):
     filename: Optional[str] = None
     type: str
     transactions_created: list[CategorizeResponse]
     extraction_model: str
+    skipped: list[SkippedTransaction] = []
+    summary: str
 
 
 class ForecastEntry(BaseModel):
