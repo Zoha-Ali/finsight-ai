@@ -19,7 +19,7 @@ ANTHROPIC_VERSION = "2023-06-01"
 MODEL = "claude-haiku-4-5"
 
 # Multi-model routing: "simple" requests (categorization, straightforward
-# single-fact questions) go to Llama-via-Groq for speed/cost; "complex"
+# single-fact questions) go to Groq for speed/cost; "complex"
 # requests (multi-part questions, anything needing nuanced reasoning) go
 # to Sonnet for the extra reasoning depth. Forecasting isn't part of this
 # routing - it keeps using its own model unchanged (see forecasting_agent).
@@ -135,8 +135,8 @@ async def route_request(request: str, owner_id: int) -> dict:
 
     Multi-model routing: categorize and qa requests are also routed to a
     model based on the classifier's complexity rating - "simple" requests
-    (all categorize requests, plus simple qa questions) go to Llama via
-    Groq, "complex" qa questions go to Sonnet. Every trace entry records
+    (all categorize requests, plus simple qa questions) go to Groq,
+    "complex" qa questions go to Sonnet. Every trace entry records
     which model actually handled that step via "model_used", so the
     routing decision is visible after the fact.
     """

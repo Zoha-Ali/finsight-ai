@@ -10,8 +10,12 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # The model used for every request routed to Groq - see
 # supervisor_agent.py's simple/complex classification, which sends
-# "simple" requests here instead of to Anthropic.
-GROQ_MODEL = "llama-3.3-70b-versatile"
+# "simple" requests here instead of to Anthropic. Was llama-3.3-70b-
+# versatile until Groq decommissioned it on 2026-08-16; switched to
+# openai/gpt-oss-120b, Groq's recommended replacement (also cheaper:
+# $0.15/$0.60 per million tokens vs Llama 3.3 70B's $0.59/$0.79).
+# Verified against Groq's live /v1/models endpoint before switching.
+GROQ_MODEL = "openai/gpt-oss-120b"
 
 
 def is_groq_model(model: str) -> bool:

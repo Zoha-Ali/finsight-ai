@@ -21,8 +21,8 @@ SONNET_MODEL = "claude-sonnet-5"
 # Models available for the side-by-side comparison feature - both run the
 # identical tool-use loop against the same real data, so any difference in
 # the answers reflects the model itself, not the pipeline. Matches the
-# actual automatic routing split in supervisor_agent.py (Groq/Llama for
-# simple requests, Sonnet for complex ones), rather than an unrelated pair.
+# actual automatic routing split in supervisor_agent.py (Groq for simple
+# requests, Sonnet for complex ones), rather than an unrelated pair.
 COMPARISON_MODELS = {"sonnet": SONNET_MODEL, "groq": GROQ_MODEL}
 
 MAX_TOOL_CALLS = 4
@@ -366,12 +366,18 @@ async def _call_groq_with_tools_recovering(messages: list[dict], model: str) -> 
     is None only if both attempts failed; retried is True if the first
     attempt failed but the second one succeeded.
 
-    Llama on Groq occasionally emits a malformed function-call (e.g. an
-    XML-ish <function=...> tag instead of a proper tool_calls entry),
-    which Groq's own API rejects outright with a 400 "tool_use_failed"
-    before we ever see a response to parse - this is intermittent (roughly
-    half the attempts against the same question in testing), so a second
-    attempt against the same prompt often just succeeds. The caller
+    Whichever model Groq is currently routed to has intermittently emitted
+    a malformed function-call the API rejects outright with a 400
+    "tool_use_failed" before we ever see a response to parse - true of
+    both llama-3.3-70b-versatile (until Groq decommissioned it on
+    2026-08-16) and its replacement, openai/gpt-oss-120b. This isn't
+    reliably self-healing on a single retry - re-tested live against
+    gpt-oss-120b at realistic, paced request intervals (not hammering the
+    API) and only about 1 in 10 failures recovered via the retry, with
+    roughly half of all attempts needing the full Sonnet fallback below.
+    The retry stays anyway since it's a free, cheap chance to avoid the
+    fallback's extra latency/cost - it just shouldn't be relied on as the
+    primary recovery path; that's what the fallback is for. The caller
     decides what to do if both attempts fail (rather than this silently
     forcing a no-data answer, which is what used to happen here).
     """
@@ -393,8 +399,8 @@ async def _answer_question_groq(question: str, owner_id: int, model: str) -> dic
 
     If Groq's own API rejects the tool-call attempt twice in a row (see
     _call_groq_with_tools_recovering), this falls back to a fresh request
-    to Sonnet (with tools) rather than forcing Llama to answer with zero
-    data - which technically "degrades gracefully" but produces an
+    to Sonnet (with tools) rather than forcing the Groq model to answer
+    with zero data - which technically "degrades gracefully" but produces an
     honest-but-useless "I don't have enough information" answer instead
     of the real, data-grounded one Sonnet can actually get. The result
     carries "model_used" and "recovery_path" so callers (route_request's
@@ -417,7 +423,7 @@ async def _answer_question_groq(question: str, owner_id: int, model: str) -> dic
         if response is None:
             # Both the original attempt and the retry failed to produce a
             # usable tool call - fall back to Sonnet with tools instead of
-            # asking Llama a second time with nothing to go on.
+            # asking the Groq model a second time with nothing to go on.
             result = await _answer_question_anthropic(question, owner_id, SONNET_MODEL)
             result["model_used"] = SONNET_MODEL
             result["recovery_path"] = "sonnet_fallback"
@@ -466,7 +472,7 @@ async def _timed_answer(question: str, owner_id: int, model: str) -> dict:
 
 
 async def compare_models(question: str, owner_id: int) -> dict:
-    """Answer the same question with claude-sonnet-5 and Llama-via-Groq.
+    """Answer the same question with claude-sonnet-5 and Groq's model.
 
     Runs the identical tool-use loop from answer_question() against each
     model concurrently, both scoped to the same owner_id and hitting the

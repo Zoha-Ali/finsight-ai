@@ -19,7 +19,7 @@
 
 ## Week 7 — Advanced Features & Polish
 - [x] Secondary AI feature (advanced forecasting) — historical-average fallback baseline when no budget is set, plus weekly-average-based anomaly detection (replacing a simpler recent-transaction-average baseline)
-- [x] Multi-model routing (2+ LLM providers/models active) — Anthropic (Sonnet, for complex Q&A) + Groq/Llama 3.3 70B (for categorization and simple Q&A), chosen per-request by the Supervisor's complexity classification; also a manual Compare Models mode (Haiku vs Sonnet side by side) on the Chat page
+- [x] Multi-model routing (2+ LLM providers/models active) — Anthropic (Sonnet, for complex Q&A) + Groq/openai-gpt-oss-120b (for categorization and simple Q&A), chosen per-request by the Supervisor's complexity classification; also a manual Compare Models mode (Haiku vs Sonnet side by side) on the Chat page
 - [ ] Output validation (schema guards, retry logic) — partial: Pydantic schemas guard every API request/response boundary, and the Receipt Agent retries once on invalid JSON from the model, but this retry pattern isn't applied consistently across the other agents yet
 - [x] UX polish (loading/error/empty states) — loading indicators, disabled-during-request inputs, error banners, and empty states are implemented across Dashboard, Forecast, and Chat
 - [ ] Deployment (containerized or hosted) — not started, no Dockerfile or hosting config yet

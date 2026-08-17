@@ -155,7 +155,7 @@ async def categorize_transaction(transaction_id: int, owner_id: int, model: str 
 
     Predicts a category with `model` (defaults to this module's standard
     Anthropic model; the Supervisor overrides this to route "simple"
-    categorization requests to Groq/Llama instead), then compares the
+    categorization requests to Groq instead), then compares the
     transaction's amount (in Python, not by the LLM) against the user's
     average weekly spend in that category - falling back to the average
     of recent same-category transactions if there's no distinct prior

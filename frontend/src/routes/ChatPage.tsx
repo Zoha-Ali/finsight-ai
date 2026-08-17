@@ -36,7 +36,7 @@ function ModelAnswerCard({ result }: { result: ModelCompareResult }) {
         <span className="text-xs text-ink-muted tabular-figures">{result.elapsed_seconds.toFixed(2)}s</span>
       </div>
       {result.recovery_path === 'sonnet_fallback' && (
-        <p className="text-xs font-medium text-danger">⚠️ Llama failed, showing Sonnet instead</p>
+        <p className="text-xs font-medium text-danger">⚠️ Groq model failed, showing Sonnet instead</p>
       )}
       <p className="text-sm text-ink">{result.answer}</p>
       {result.table && result.table.length > 0 && (
@@ -126,7 +126,7 @@ export default function ChatPage() {
           disabled={loading}
           className="rounded border-border text-primary focus:ring-primary/30"
         />
-        Compare models (Claude Sonnet 5 vs Llama 3.3 70B on Groq)
+        Compare models (Claude Sonnet 5 vs GPT-OSS 120B on Groq)
       </label>
 
       <form onSubmit={handleSubmit} className="flex gap-2">
