@@ -88,6 +88,25 @@ EXTRACTION_SYSTEM_PROMPT = (
     'debit or credit, "amount" itself must always be the positive '
     "magnitude of the transaction - never a negative number. Direction "
     'is expressed only through the "type" field.\n\n'
+    'For the "merchant" field specifically: extract only the clean '
+    "business/payee name, not the full raw line text. Bank and card "
+    "statements often bundle reference numbers, consumer/account IDs, "
+    "STAN (System Trace Audit Number) codes, trip/order/transaction IDs, "
+    "or phone numbers into the same line as the merchant name - strip "
+    "all of that out and keep only the actual business or payee name "
+    '(e.g. "Zong0001 Consumer No 03120408494" -> "Zong", "K-Electric '
+    'STAN No.493841 BPS" -> "K-Electric", "Careem Trip ID CRM-4471829" '
+    '-> "Careem"). This matters most for consistency: when the SAME '
+    "merchant appears on multiple rows with reference numbers attached "
+    "to some rows but not others, extract the same clean name every "
+    "time rather than including the reference info on some rows and "
+    "not others - a human reading the statement would recognize these "
+    "as the same business, and the extracted merchant name should "
+    "reflect that. Do not fabricate or guess a business name that "
+    "isn't actually present in the text; only remove clearly incidental "
+    'reference/tracking numbers, not genuine parts of the business '
+    'name itself (e.g. "7-Eleven" or "K-Electric" are real names, not '
+    "reference numbers, and must stay intact).\n\n"
     'For the "date" field specifically: only return a date you can '
     "actually read in the file. If no date is visible, or it's too "
     "blurry, cut off, or ambiguous to read with confidence, return null. "

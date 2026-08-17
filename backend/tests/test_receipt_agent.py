@@ -292,3 +292,20 @@ async def test_truncated_response_raises_immediately_without_a_wasted_retry(monk
         assert "too many transactions" in str(exc)
 
     assert call_mock.await_count == 1
+
+
+def test_extraction_prompt_instructs_stripping_reference_numbers_from_merchant():
+    # Regression guard: this guidance is what fixes the "same merchant
+    # extracted as inconsistent name strings" bug (e.g. "Zong" on one row
+    # vs "Zong0001 Consumer No 03120408494" on another, because the model
+    # had no rule for where reference/consumer/STAN metadata bundled into
+    # the statement line should be excluded from the merchant name). If
+    # this guidance is ever accidentally removed from the prompt, the
+    # inconsistency comes back silently with no other test able to catch
+    # it, since every other test mocks _extract() and never exercises the
+    # real prompt text.
+    prompt = receipt_agent.EXTRACTION_SYSTEM_PROMPT.lower()
+    assert "consumer" in prompt
+    assert "stan" in prompt
+    assert "reference" in prompt
+    assert "same clean name" in prompt
