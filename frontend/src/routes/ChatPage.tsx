@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { api, getErrorMessage } from '@/lib/api'
-import { modelLabel } from '@/lib/modelLabels'
+import { ModelChip } from '@/components/ModelChip'
 import type { CompareModelsResponse, ModelCompareResult, QAResponse } from '@/types'
 
 interface ChatEntry {
@@ -32,7 +32,7 @@ function ModelAnswerCard({ result }: { result: ModelCompareResult }) {
   return (
     <div className="bg-surface-card border border-border rounded-lg px-4 py-3 space-y-2">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-primary">{modelLabel(result.model)}</span>
+        <ModelChip model={result.model} />
         <span className="text-xs text-ink-muted tabular-figures">{result.elapsed_seconds.toFixed(2)}s</span>
       </div>
       {result.recovery_path === 'sonnet_fallback' && (
@@ -223,9 +223,7 @@ export default function ChatPage() {
                       </table>
                     </div>
                   )}
-                  {entry.modelUsed && (
-                    <p className="text-xs text-ink-muted/70">via {modelLabel(entry.modelUsed)}</p>
-                  )}
+                  <ModelChip model={entry.modelUsed} />
                 </div>
               </div>
             )}

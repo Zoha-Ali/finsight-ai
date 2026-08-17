@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, getErrorMessage } from '@/lib/api'
-import { modelLabel } from '@/lib/modelLabels'
+import { ModelChip } from '@/components/ModelChip'
 import type { ReceiptDocType, ReceiptUploadResponse, Transaction, TransactionCreate } from '@/types'
 
 const todayIso = () => new Date().toISOString().slice(0, 10)
@@ -298,9 +298,7 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-semibold text-ink">Receipt processed</h3>
-                {receiptExtractionModel && (
-                  <span className="text-xs text-ink-muted/70">via {modelLabel(receiptExtractionModel)}</span>
-                )}
+                <ModelChip model={receiptExtractionModel} />
               </div>
               {receiptTransactions[0].is_anomaly && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-danger-soft text-danger text-xs font-medium px-2 py-0.5">
@@ -336,9 +334,7 @@ export default function DashboardPage() {
             <div className="px-4 py-3 border-b border-border flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-semibold text-ink">Statement processed</h3>
-                {receiptExtractionModel && (
-                  <span className="text-xs text-ink-muted/70">via {modelLabel(receiptExtractionModel)}</span>
-                )}
+                <ModelChip model={receiptExtractionModel} />
               </div>
               <span className="text-xs text-ink-muted">
                 {receiptTransactions.length} transaction{receiptTransactions.length === 1 ? '' : 's'}
@@ -431,8 +427,8 @@ export default function DashboardPage() {
                     <td className="px-5 py-3 text-ink-muted capitalize">
                       {tx.category_name ?? 'Uncategorized'}
                       {tx.categorized_by_model && (
-                        <div className="text-xs italic text-ink-muted/70 mt-0.5 normal-case">
-                          via {modelLabel(tx.categorized_by_model)}
+                        <div className="mt-1 normal-case">
+                          <ModelChip model={tx.categorized_by_model} />
                         </div>
                       )}
                     </td>

@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { api, getErrorMessage } from '@/lib/api'
-import { modelLabel } from '@/lib/modelLabels'
+import { ModelChip } from '@/components/ModelChip'
 import type { Category, ForecastEntry, ForecastResponse } from '@/types'
 
 function comparisonLabel(entry: ForecastEntry): string {
@@ -204,9 +204,7 @@ export default function ForecastPage() {
           <section className="bg-surface-card border border-border rounded-lg p-5">
             <div className="flex items-center justify-between mb-2">
               <h2 className="text-sm font-semibold text-ink">Summary</h2>
-              {data.summary_model && (
-                <span className="text-xs text-ink-muted/70">via {modelLabel(data.summary_model)}</span>
-              )}
+              <ModelChip model={data.summary_model} />
             </div>
             <div
               className="text-sm text-ink leading-relaxed [&_strong]:font-semibold [&_h1]:text-sm [&_h1]:font-semibold [&_h2]:text-sm [&_h2]:font-semibold [&_h1]:mb-1 [&_h2]:mb-1 [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:list-disc [&_ul]:pl-5"
