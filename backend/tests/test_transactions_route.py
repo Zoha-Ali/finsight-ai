@@ -219,6 +219,58 @@ async def test_approve_transaction_returns_404_for_another_users_transaction(
     assert response.status_code == 404
 
 
+async def test_create_transaction_rejects_a_future_date(monkeypatch, client, auth_headers):
+    monkeypatch.setattr(transactions_route, "categorize_transaction", AsyncMock(return_value=None))
+
+    import datetime
+
+    tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
+
+    response = await client.post(
+        "/transactions",
+        json={"merchant": "Time Traveler Purchase", "amount": 10.0, "date": tomorrow},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 422
+    assert "cannot be in the future" in response.json()["detail"]
+
+    # rejected before any DB write happened
+    list_response = await client.get("/transactions", headers=auth_headers)
+    merchants = [t["merchant"] for t in list_response.json()]
+    assert "Time Traveler Purchase" not in merchants
+
+
+async def test_create_transaction_accepts_todays_date(monkeypatch, client, auth_headers):
+    monkeypatch.setattr(transactions_route, "categorize_transaction", AsyncMock(return_value=None))
+
+    import datetime
+
+    today = datetime.date.today().isoformat()
+
+    response = await client.post(
+        "/transactions",
+        json={"merchant": "Same Day Purchase", "amount": 10.0, "date": today},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["date"] == today
+
+
+async def test_create_transaction_accepts_a_past_date(monkeypatch, client, auth_headers):
+    monkeypatch.setattr(transactions_route, "categorize_transaction", AsyncMock(return_value=None))
+
+    response = await client.post(
+        "/transactions",
+        json={"merchant": "Old Purchase", "amount": 10.0, "date": "2020-01-01"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["date"] == "2020-01-01"
+
+
 async def test_approve_transaction_returns_400_when_not_flagged_as_anomaly(monkeypatch, client, auth_headers):
     monkeypatch.setattr(transactions_route, "categorize_transaction", AsyncMock(return_value=None))
 

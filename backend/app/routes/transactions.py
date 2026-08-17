@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +37,12 @@ async def create_transaction(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> TransactionOut:
+    if payload.date > date.today():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Transaction date cannot be in the future. Please choose today's date or an earlier date.",
+        )
+
     transaction = Transaction(
         owner_id=current_user.id,
         merchant=payload.merchant,

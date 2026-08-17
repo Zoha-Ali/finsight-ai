@@ -57,6 +57,16 @@ export default function DashboardPage() {
   async function handleAdd(e: FormEvent) {
     e.preventDefault()
     setError(null)
+
+    // Defense in depth: the date input's max attribute stops the picker
+    // from offering future dates, but a typed or pasted value can still
+    // bypass it - catch that here with the same clear message the backend
+    // would otherwise return, instead of a round trip just to find out.
+    if (date > todayIso()) {
+      setError("Transaction date cannot be in the future. Please choose today's date or an earlier date.")
+      return
+    }
+
     setSubmitting(true)
 
     const payload: TransactionCreate = {
@@ -216,6 +226,7 @@ export default function DashboardPage() {
               id="date"
               type="date"
               required
+              max={todayIso()}
               value={date}
               onChange={(e) => setDate(e.target.value)}
               className="w-full rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary"
