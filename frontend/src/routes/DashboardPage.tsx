@@ -426,11 +426,9 @@ export default function DashboardPage() {
                     <td className="px-5 py-3 text-ink-muted capitalize">{tx.source}</td>
                     <td className="px-5 py-3 text-ink-muted capitalize">
                       {tx.category_name ?? 'Uncategorized'}
-                      {tx.categorized_by_model && (
-                        <div className="mt-1 normal-case">
-                          <ModelChip model={tx.categorized_by_model} />
-                        </div>
-                      )}
+                      <div className="mt-1 normal-case">
+                        <ModelChip model={tx.categorized_by_model} fallback="—" />
+                      </div>
                     </td>
                     <td className="px-5 py-3">
                       {tx.is_anomaly ? (
