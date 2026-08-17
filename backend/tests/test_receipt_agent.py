@@ -214,3 +214,81 @@ async def test_not_a_receipt_reports_empty_skipped_and_summary(monkeypatch, db_s
     assert result["type"] == "not_a_receipt"
     assert result["skipped"] == []
     assert result["summary"] == ""
+
+
+def _fake_transactions(n):
+    return [
+        {"merchant": f"Merchant {i}", "amount": 10.0 + i, "date": "2026-07-10", "type": "debit"}
+        for i in range(n)
+    ]
+
+
+async def test_statement_at_the_cap_processes_normally(monkeypatch, db_session, test_user):
+    # Exactly MAX_TRANSACTIONS_PER_UPLOAD items - must NOT be rejected,
+    # confirming the cap is "more than N", not "N or more".
+    n = receipt_agent.MAX_TRANSACTIONS_PER_UPLOAD
+    monkeypatch.setattr(
+        receipt_agent,
+        "_extract",
+        AsyncMock(return_value={"type": "statement", "transactions": _fake_transactions(n)}),
+    )
+    monkeypatch.setattr(receipt_agent, "categorize_transaction", _fake_categorize_transaction())
+
+    result = await receipt_agent.process_receipt("data:image/png;base64,AAAA", test_user.id)
+
+    assert len(result["transactions_created"]) == n
+
+    db_transactions = (
+        await db_session.execute(select(Transaction).where(Transaction.owner_id == test_user.id))
+    ).scalars().all()
+    assert len(db_transactions) == n
+
+
+async def test_statement_over_the_cap_is_rejected_with_no_db_writes(monkeypatch, db_session, test_user):
+    n = receipt_agent.MAX_TRANSACTIONS_PER_UPLOAD + 1
+    monkeypatch.setattr(
+        receipt_agent,
+        "_extract",
+        AsyncMock(return_value={"type": "statement", "transactions": _fake_transactions(n)}),
+    )
+    categorize_mock = AsyncMock()
+    monkeypatch.setattr(receipt_agent, "categorize_transaction", categorize_mock)
+
+    try:
+        await receipt_agent.process_receipt("data:image/png;base64,AAAA", test_user.id)
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        message = str(exc)
+        assert str(n) in message
+        assert str(receipt_agent.MAX_TRANSACTIONS_PER_UPLOAD) in message
+        assert "too many" in message
+
+    # rejected before any DB writes or categorization happened - not a
+    # partial/garbage result
+    categorize_mock.assert_not_awaited()
+    db_transactions = (
+        await db_session.execute(select(Transaction).where(Transaction.owner_id == test_user.id))
+    ).scalars().all()
+    assert db_transactions == []
+
+
+async def test_truncated_response_raises_immediately_without_a_wasted_retry(monkeypatch, db_session, test_user):
+    # A response cut off by max_tokens can't be salvaged by retrying the
+    # identical request - it will truncate again at the same point - so
+    # _extract must raise on the first call, not spend a second API call
+    # on a doomed retry.
+    call_mock = AsyncMock(
+        return_value={
+            "stop_reason": "max_tokens",
+            "content": [{"type": "text", "text": '{"type": "statement", "transactions": [{"merchant":'}],
+        }
+    )
+    monkeypatch.setattr(receipt_agent, "_call_model", call_mock)
+
+    try:
+        await receipt_agent.process_receipt("data:image/png;base64,AAAA", test_user.id)
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "too many transactions" in str(exc)
+
+    assert call_mock.await_count == 1

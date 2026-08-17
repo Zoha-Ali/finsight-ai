@@ -19,6 +19,15 @@ ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
 MODEL = "claude-sonnet-5"
 
+# Empirically determined, not a guess: with max_tokens=8192 below, a
+# synthetic 100-transaction statement extracted cleanly (9512-character
+# response, valid JSON) while a 130-transaction one truncated mid-JSON
+# around item 80-84 (varies run to run with how verbosely the model
+# happens to format its output, so the boundary isn't a precise fixed
+# number). 75 leaves a healthy margin below the confirmed-good 100 while
+# comfortably covering realistic single-statement uploads.
+MAX_TRANSACTIONS_PER_UPLOAD = 75
+
 EXTRACTION_SYSTEM_PROMPT = (
     "You extract structured data from receipt and bank/credit card "
     "statement files - either images or PDFs, including multi-page PDF "
@@ -193,7 +202,14 @@ def _parse_date(value) -> tuple[date, bool]:
         return date.today(), True
 
 
-async def _call_model(messages: list[dict]) -> str:
+async def _call_model(messages: list[dict]) -> dict:
+    """Returns the raw Messages API response dict, not just the text -
+    callers need stop_reason to tell a response that was cut off by the
+    token limit (retrying the identical request just truncates again in
+    the same place - not recoverable the way a malformed-but-complete
+    response is) apart from one that's merely malformed but complete
+    (worth the existing reformat-and-retry).
+    """
     if not ANTHROPIC_API_KEY:
         raise RuntimeError("ANTHROPIC_API_KEY is not set in the environment")
 
@@ -207,20 +223,27 @@ async def _call_model(messages: list[dict]) -> str:
             },
             json={
                 "model": MODEL,
-                "max_tokens": 2048,
+                "max_tokens": 8192,
                 "system": EXTRACTION_SYSTEM_PROMPT,
                 "messages": messages,
             },
         )
         response.raise_for_status()
-        data = response.json()
+        return response.json()
 
-    return "".join(block["text"] for block in data["content"] if block.get("type") == "text").strip()
+
+def _extract_text(response: dict) -> str:
+    return "".join(block["text"] for block in response["content"] if block.get("type") == "text").strip()
 
 
 async def _extract(media_type: str, data: str) -> dict:
     """Run the extraction call, retrying once if the model's response
-    isn't valid JSON.
+    isn't valid JSON - unless the response was cut off by hitting
+    max_tokens, in which case it raises immediately instead: a statement
+    with too many transactions to fit in the response budget will
+    truncate at the same point again on a same-input retry, so retrying
+    only wastes an API call and delays telling the user what's actually
+    wrong.
     """
     messages: list[dict] = [
         {
@@ -234,7 +257,15 @@ async def _extract(media_type: str, data: str) -> dict:
 
     last_error: Exception | None = None
     for _ in range(2):
-        raw_text = await _call_model(messages)
+        response = await _call_model(messages)
+
+        if response.get("stop_reason") == "max_tokens":
+            raise ValueError(
+                "This file has too many transactions to process in one upload. "
+                "Please split it into smaller date ranges and upload each part separately."
+            )
+
+        raw_text = _extract_text(response)
         try:
             return json.loads(_strip_code_fence(raw_text))
         except json.JSONDecodeError as exc:
@@ -313,6 +344,17 @@ async def process_receipt(file_base64: str, owner_id: int) -> dict:
     raw_transactions = extracted.get("transactions") or []
     if not raw_transactions:
         raise ValueError("No transactions could be extracted from the file")
+
+    if len(raw_transactions) > MAX_TRANSACTIONS_PER_UPLOAD:
+        # Past this point the extraction call itself starts silently
+        # truncating mid-JSON (see MAX_TRANSACTIONS_PER_UPLOAD's comment) -
+        # reject explicitly here, before touching the DB, rather than
+        # letting a huge statement risk a garbled partial result.
+        raise ValueError(
+            f"This statement has {len(raw_transactions)} transactions, which is too "
+            f"many to process in one upload (limit: {MAX_TRANSACTIONS_PER_UPLOAD}). "
+            "Please split it into smaller date ranges and upload each part separately."
+        )
 
     if doc_type not in ("receipt", "statement"):
         doc_type = "statement" if len(raw_transactions) > 1 else "receipt"
