@@ -16,35 +16,55 @@
 // with IBM Plex Mono + tabular-nums for money figures specifically, so
 // digit columns line up the way they would in an actual statement.
 
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import Layout from '@/components/Layout'
-import LoginPage from '@/routes/LoginPage'
-import DashboardPage from '@/routes/DashboardPage'
-import ForecastPage from '@/routes/ForecastPage'
-import ChatPage from '@/routes/ChatPage'
 import { isAuthenticated } from '@/lib/auth'
+
+// Route-level code splitting: each page's code (and anything it alone
+// depends on, e.g. ForecastPage's react-markdown) only downloads when a
+// user actually navigates there, instead of every route's code loading
+// upfront on first paint regardless of which page - or whether the user
+// is even authenticated yet - they land on.
+const LoginPage = lazy(() => import('@/routes/LoginPage'))
+const DashboardPage = lazy(() => import('@/routes/DashboardPage'))
+const ForecastPage = lazy(() => import('@/routes/ForecastPage'))
+const ChatPage = lazy(() => import('@/routes/ChatPage'))
+
+// Matches the plain, muted "Loading…" text already used in-page
+// throughout the app (DashboardPage, ForecastPage) rather than
+// introducing a new spinner/skeleton style just for this.
+function RouteFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <p className="text-sm text-ink-muted">Loading…</p>
+    </div>
+  )
+}
 
 function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
 
-        <Route element={<ProtectedRoute />}>
-          <Route element={<Layout />}>
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/forecast" element={<ForecastPage />} />
-            <Route path="/chat" element={<ChatPage />} />
+          <Route element={<ProtectedRoute />}>
+            <Route element={<Layout />}>
+              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/forecast" element={<ForecastPage />} />
+              <Route path="/chat" element={<ChatPage />} />
+            </Route>
           </Route>
-        </Route>
 
-        <Route
-          path="/"
-          element={<Navigate to={isAuthenticated() ? '/dashboard' : '/login'} replace />}
-        />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+          <Route
+            path="/"
+            element={<Navigate to={isAuthenticated() ? '/dashboard' : '/login'} replace />}
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
     </BrowserRouter>
   )
 }
