@@ -3,7 +3,14 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth import create_access_token, create_refresh_token, decode_token, hash_password, verify_password
+from ..auth import (
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    get_current_user,
+    hash_password,
+    verify_password,
+)
 from ..database import get_db
 from ..models import User
 from ..schemas import AccessTokenResponse, RefreshRequest, SignupRequest, TokenResponse
@@ -29,8 +36,8 @@ async def signup(payload: SignupRequest, db: AsyncSession = Depends(get_db)) -> 
     await db.refresh(user)
 
     return TokenResponse(
-        access_token=create_access_token(user.id),
-        refresh_token=create_refresh_token(user.id),
+        access_token=create_access_token(user.id, user.token_version),
+        refresh_token=create_refresh_token(user.id, user.token_version),
     )
 
 
@@ -45,8 +52,8 @@ async def login(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
 
     return TokenResponse(
-        access_token=create_access_token(user.id),
-        refresh_token=create_refresh_token(user.id),
+        access_token=create_access_token(user.id, user.token_version),
+        refresh_token=create_refresh_token(user.id, user.token_version),
     )
 
 
@@ -58,7 +65,26 @@ async def refresh(payload: RefreshRequest, db: AsyncSession = Depends(get_db)) -
 
     user_id = token_payload.get("sub")
     result = await db.execute(select(User).where(User.id == int(user_id)))
-    if result.scalar_one_or_none() is None:
+    user = result.scalar_one_or_none()
+    if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
-    return AccessTokenResponse(access_token=create_access_token(int(user_id)))
+    if token_payload.get("token_version") != user.token_version:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token has been invalidated")
+
+    return AccessTokenResponse(access_token=create_access_token(user.id, user.token_version))
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Invalidate every access and refresh token issued to this user before
+    now, across every device/session - not just the token used for this
+    request. Bumping token_version means get_current_user and /refresh
+    both reject any token whose token_version claim no longer matches.
+    """
+    user = (await db.execute(select(User).where(User.id == current_user.id))).scalar_one()
+    user.token_version += 1
+    await db.commit()

@@ -93,5 +93,5 @@ async def test_user(db_session):
 
 @pytest_asyncio.fixture
 async def auth_headers(test_user):
-    token = create_access_token(test_user.id)
+    token = create_access_token(test_user.id, test_user.token_version)
     return {"Authorization": f"Bearer {token}"}

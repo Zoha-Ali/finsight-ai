@@ -31,6 +31,12 @@ class User(Base):
     username = Column(String, unique=True, nullable=False, index=True)
     email = Column(String, unique=True, nullable=False, index=True)
     hashed_password = Column(String, nullable=False)
+    # Bumped on logout - every access/refresh token embeds the version it
+    # was issued under, and get_current_user/the refresh endpoint reject a
+    # token whose version doesn't match the user's current one. This
+    # invalidates every token issued before the bump, across every
+    # device/session, without needing a revocation table.
+    token_version = Column(Integer, nullable=False, default=0, server_default="0")
 
     transactions = relationship("Transaction", back_populates="owner", cascade="all, delete-orphan")
     budgets = relationship("Budget", back_populates="owner", cascade="all, delete-orphan")

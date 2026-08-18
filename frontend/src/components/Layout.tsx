@@ -1,12 +1,26 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { api } from '@/lib/api'
 import { clearTokens } from '@/lib/auth'
 
 export default function Layout() {
   const navigate = useNavigate()
 
-  function handleLogout() {
-    clearTokens()
-    navigate('/login', { replace: true })
+  async function handleLogout() {
+    try {
+      // Invalidates every outstanding token server-side (see POST
+      // /auth/logout), not just this browser's copy - without this call,
+      // a stolen token would stay valid until it naturally expired.
+      await api.post('/auth/logout')
+    } catch (err) {
+      // A network failure (or a token that was already invalid) shouldn't
+      // trap the user on a broken logout button - they must still be able
+      // to leave this device's session locally even if the server round
+      // trip fails, so this is reported rather than blocking anything.
+      console.error('Logout request failed; clearing local session anyway.', err)
+    } finally {
+      clearTokens()
+      navigate('/login', { replace: true })
+    }
   }
 
   const linkClass = ({ isActive }: { isActive: boolean }) =>

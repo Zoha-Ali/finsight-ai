@@ -20,6 +20,7 @@ PROTECTED_ENDPOINTS = [
     ("DELETE", "/budgets/1", {}),
     ("GET", "/anomalies", {}),
     ("GET", "/traces", {}),
+    ("POST", "/auth/logout", {}),
 ]
 
 

@@ -122,7 +122,7 @@ async def test_delete_transaction_returns_403_for_another_users_transaction(
     db_session.add(other_user)
     await db_session.commit()
     await db_session.refresh(other_user)
-    other_headers = {"Authorization": f"Bearer {create_access_token(other_user.id)}"}
+    other_headers = {"Authorization": f"Bearer {create_access_token(other_user.id, other_user.token_version)}"}
 
     create_response = await client.post(
         "/transactions",
@@ -208,7 +208,7 @@ async def test_approve_transaction_returns_404_for_another_users_transaction(
     db_session.add(other_user)
     await db_session.commit()
     await db_session.refresh(other_user)
-    other_headers = {"Authorization": f"Bearer {create_access_token(other_user.id)}"}
+    other_headers = {"Authorization": f"Bearer {create_access_token(other_user.id, other_user.token_version)}"}
 
     transaction_id = await _create_flagged_anomaly(client, db_session, other_headers, other_user, monkeypatch)
 
