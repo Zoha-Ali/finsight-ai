@@ -1,9 +1,27 @@
+import base64
+import io
 from unittest.mock import AsyncMock
 
+from pypdf import PdfWriter
 from sqlalchemy import select
 
 from app.agents import receipt_agent
 from app.models import Trace, Transaction
+
+
+def _make_pdf_bytes(*, encrypted: bool) -> bytes:
+    """A minimal real PDF, self-contained rather than depending on an
+    external fixture file - optionally locked with a real user/open
+    password (requires a password just to open, not just permission
+    restrictions), matching what a locked bank statement looks like.
+    """
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=200)
+    if encrypted:
+        writer.encrypt(user_password="1234", owner_password="1234")
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
 
 
 def _fake_categorize_transaction():
@@ -309,3 +327,61 @@ def test_extraction_prompt_instructs_stripping_reference_numbers_from_merchant()
     assert "stan" in prompt
     assert "reference" in prompt
     assert "same clean name" in prompt
+
+
+def test_is_password_protected_pdf_detects_a_real_locked_pdf():
+    assert receipt_agent._is_password_protected_pdf(_make_pdf_bytes(encrypted=True)) is True
+    assert receipt_agent._is_password_protected_pdf(_make_pdf_bytes(encrypted=False)) is False
+
+
+def test_is_password_protected_pdf_does_not_flag_unrelated_parse_failures():
+    # A genuinely corrupt/non-PDF file is a different, out-of-scope
+    # failure mode - this check must not raise, and must not report it as
+    # "password protected" (that would be a misleading error message).
+    assert receipt_agent._is_password_protected_pdf(b"not a pdf at all") is False
+
+
+async def test_password_protected_pdf_is_rejected_before_any_model_call(monkeypatch, db_session, test_user):
+    extract_mock = AsyncMock()
+    monkeypatch.setattr(receipt_agent, "_extract", extract_mock)
+
+    file_b64 = base64.b64encode(_make_pdf_bytes(encrypted=True)).decode("ascii")
+
+    try:
+        await receipt_agent.process_receipt(file_b64, test_user.id)
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "password-protected" in str(exc)
+
+    # the whole point: no wasted API call on a file that can't be read
+    extract_mock.assert_not_awaited()
+
+    db_transactions = (
+        await db_session.execute(select(Transaction).where(Transaction.owner_id == test_user.id))
+    ).scalars().all()
+    assert db_transactions == []
+
+
+async def test_unlocked_pdf_still_reaches_the_model_normally(monkeypatch, db_session, test_user):
+    # Regression check: a real, non-encrypted PDF must not be caught by
+    # the password check and must still flow through to extraction
+    # exactly as before this fix.
+    monkeypatch.setattr(
+        receipt_agent,
+        "_extract",
+        AsyncMock(
+            return_value={
+                "type": "receipt",
+                "transactions": [
+                    {"merchant": "Test Store", "amount": 10.0, "date": "2026-07-10", "type": "debit"}
+                ],
+            }
+        ),
+    )
+    monkeypatch.setattr(receipt_agent, "categorize_transaction", _fake_categorize_transaction())
+
+    file_b64 = base64.b64encode(_make_pdf_bytes(encrypted=False)).decode("ascii")
+
+    result = await receipt_agent.process_receipt(file_b64, test_user.id)
+
+    assert len(result["transactions_created"]) == 1

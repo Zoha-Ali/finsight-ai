@@ -1,11 +1,13 @@
 import base64
 import binascii
+import io
 import json
 import os
 from datetime import date
 
 import httpx
 from dotenv import load_dotenv
+from pypdf import PdfReader
 
 from ..database import AsyncSessionLocal
 from ..models import Transaction, TransactionSource
@@ -154,6 +156,27 @@ def _split_data_uri(file_base64: str) -> tuple[str, str]:
     except (ValueError, binascii.Error):
         raw_bytes = b""
     return _detect_media_type(raw_bytes), data
+
+
+def _is_password_protected_pdf(raw_bytes: bytes) -> bool:
+    """True if this PDF needs a password just to open it (a real "user"/
+    open password, not just permission restrictions on printing/editing).
+
+    Checked locally, before the file is ever sent to the vision model:
+    Anthropic's API rejects a password-protected PDF with a 400 ("The PDF
+    specified is password protected") that the caller's existing `except
+    ValueError` handling doesn't catch, surfacing as an opaque 500 - and
+    that round trip costs a real API call for a file that was never
+    readable to begin with. Any OTHER PDF-parsing problem (a genuinely
+    corrupt file, an edge case pypdf can't handle) is deliberately NOT
+    treated as an error here - this check is scoped narrowly to password
+    protection specifically; anything else still gets sent to the model,
+    which is often more lenient than a strict local parser anyway.
+    """
+    try:
+        return PdfReader(io.BytesIO(raw_bytes)).is_encrypted
+    except Exception:
+        return False
 
 
 def _content_block(media_type: str, data: str) -> dict:
@@ -313,7 +336,9 @@ async def process_receipt(file_base64: str, owner_id: int) -> dict:
     multi-page statements, go through Claude's native "document" content
     block in a single API call (Anthropic's API reads every page
     server-side), so all pages are extracted and combined into one result
-    without any local PDF-to-image conversion step.
+    without any local PDF-to-image conversion step. A password-protected
+    PDF is rejected immediately with a clear message, before it ever
+    reaches the model.
 
     Uses claude-sonnet-5 to classify the file as a single receipt or a
     multi-line statement and extract each transaction (merchant, amount,
@@ -333,6 +358,12 @@ async def process_receipt(file_base64: str, owner_id: int) -> dict:
     detection.
     """
     media_type, data = _split_data_uri(file_base64)
+
+    if media_type == "application/pdf" and _is_password_protected_pdf(base64.b64decode(data)):
+        raise ValueError(
+            "This PDF is password-protected. Please upload an unlocked version of your statement."
+        )
+
     extracted = await _extract(media_type, data)
 
     doc_type = extracted.get("type")

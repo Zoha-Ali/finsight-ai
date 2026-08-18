@@ -9,6 +9,7 @@ bcrypt
 PyJWT
 mcp==1.28.1
 httpx
+pypdf
 
 pytest
 pytest-asyncio
