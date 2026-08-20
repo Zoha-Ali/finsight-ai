@@ -6,6 +6,23 @@ import type { ReceiptDocType, ReceiptUploadResponse, Transaction, TransactionCre
 const todayIso = () => new Date().toISOString().slice(0, 10)
 const ACCEPTED_RECEIPT_TYPES = 'image/png,image/jpeg,image/gif,image/webp,application/pdf'
 
+// process_receipt() is one blocking call with no incremental progress -
+// extraction, then categorization one transaction at a time - so these
+// are cosmetic phase messages, not real progress. Timing is calibrated
+// against real measured uploads (not a guess): a single-receipt upload
+// took ~22s end to end, a ~10-transaction statement ~103s - so a 4s
+// interval walks through this whole list roughly once for a small
+// upload, while a longer one settles into the final "still working"
+// message instead of visibly looping the same phases for a minute-plus.
+const RECEIPT_STATUS_MESSAGES = [
+  'Reading document…',
+  'Extracting transactions…',
+  'Categorizing spending…',
+  'Checking for anomalies…',
+]
+const RECEIPT_STATUS_INTERVAL_MS = 4000
+const RECEIPT_STATUS_FINAL_MESSAGE = 'Still working - larger statements can take a minute or two…'
+
 interface EnrichedTransaction {
   transaction_id: number
   merchant: string
@@ -36,6 +53,7 @@ export default function DashboardPage() {
   const [receiptSummary, setReceiptSummary] = useState<string | null>(null)
   const [uploadingReceipt, setUploadingReceipt] = useState(false)
   const [receiptError, setReceiptError] = useState<string | null>(null)
+  const [receiptStatusIndex, setReceiptStatusIndex] = useState(0)
 
   async function loadTransactions() {
     setLoading(true)
@@ -53,6 +71,28 @@ export default function DashboardPage() {
   useEffect(() => {
     loadTransactions()
   }, [])
+
+  // Advances the cosmetic status message on a timer while an upload is
+  // in flight. Tearing down the interval here (both on the false branch
+  // and via the cleanup function) means a fast upload just never gets
+  // past the first message - and a slow one keeps advancing correctly -
+  // with no leaked timer or stale message once uploadingReceipt flips
+  // back to false, whether the upload succeeded or failed.
+  useEffect(() => {
+    if (!uploadingReceipt) {
+      setReceiptStatusIndex(0)
+      return
+    }
+    const interval = setInterval(() => {
+      setReceiptStatusIndex((i) => i + 1)
+    }, RECEIPT_STATUS_INTERVAL_MS)
+    return () => clearInterval(interval)
+  }, [uploadingReceipt])
+
+  const receiptStatusMessage =
+    receiptStatusIndex < RECEIPT_STATUS_MESSAGES.length
+      ? RECEIPT_STATUS_MESSAGES[receiptStatusIndex]
+      : RECEIPT_STATUS_FINAL_MESSAGE
 
   async function handleAdd(e: FormEvent) {
     e.preventDefault()
@@ -275,9 +315,7 @@ export default function DashboardPage() {
           </button>
 
           {uploadingReceipt && (
-            <p className="text-sm text-ink-muted">
-              Reading the file and categorizing transactions - this can take a few seconds…
-            </p>
+            <p className="text-sm text-ink-muted">{receiptStatusMessage}</p>
           )}
         </form>
 
