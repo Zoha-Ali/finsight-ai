@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import binascii
 import io
@@ -29,6 +30,24 @@ MODEL = "claude-sonnet-5"
 # number). 75 leaves a healthy margin below the confirmed-good 100 while
 # comfortably covering realistic single-statement uploads.
 MAX_TRANSACTIONS_PER_UPLOAD = 75
+
+# Caps how many categorize_transaction() calls run concurrently below.
+# Not a rate-limit concern (this API key's real limit is 10,000
+# requests/min, checked via Anthropic's own rate-limit response headers -
+# negligible next to even MAX_TRANSACTIONS_PER_UPLOAD run at once) - it's
+# the DB connection pool that's the real constraint. The engine's pool
+# (database.py) has pool_size=5 + max_overflow=10 = 15 total connections,
+# and a single categorize_transaction() call can hold up to 2 connections
+# open simultaneously at its peak (its own session, plus a nested one
+# opened by _get_anomaly_baseline's get_weekly_average call, while the
+# outer session is still open). Uncapped concurrency on a full
+# MAX_TRANSACTIONS_PER_UPLOAD-sized statement could demand ~150
+# simultaneous connections - 10x the pool's capacity - which would cause
+# real checkout timeouts, not a graceful degradation. Set to match
+# pool_size exactly, so peak demand (5 * 2 = 10) stays within the pool's
+# non-overflow capacity, leaving the full overflow headroom free for
+# other concurrent requests sharing this same pool.
+CATEGORIZATION_CONCURRENCY = 5
 
 EXTRACTION_SYSTEM_PROMPT = (
     "You extract structured data from receipt and bank/credit card "
@@ -468,7 +487,20 @@ async def process_receipt(file_base64: str, owner_id: int) -> dict:
         # of this file at all.
         raise ValueError("Extracted transactions were all missing a merchant or amount")
 
-    transactions_created = [await categorize_transaction(tx_id, owner_id) for tx_id in created_ids]
+    # Categorizing is independent per transaction (each is its own
+    # DB session, its own model call - see CATEGORIZATION_CONCURRENCY's
+    # comment) so running them concurrently, bounded, is safe and turns
+    # what was a strictly sequential ~9-10s-per-transaction loop into a
+    # handful of concurrent batches instead - matching the same
+    # asyncio.gather pattern generate_forecast() already uses for its own
+    # independent per-category DB lookups.
+    semaphore = asyncio.Semaphore(CATEGORIZATION_CONCURRENCY)
+
+    async def _categorize_bounded(tx_id: int) -> dict:
+        async with semaphore:
+            return await categorize_transaction(tx_id, owner_id)
+
+    transactions_created = await asyncio.gather(*(_categorize_bounded(tx_id) for tx_id in created_ids))
     for entry in transactions_created:
         entry["date_estimated"] = date_estimated_by_id.get(entry["transaction_id"], False)
 
